@@ -106,6 +106,14 @@ class WindowManager:
     def page(self, name: str) -> Page:
         return self.windows[name].page
 
+    async def bring_to_front(self) -> None:
+        """Raise both browser windows above other apps (best-effort)."""
+        for win in self.windows.values():
+            try:
+                await win.page.bring_to_front()
+            except Exception:
+                pass
+
     async def close(self) -> None:
         if self._context is not None:
             try:

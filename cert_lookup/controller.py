@@ -49,6 +49,9 @@ class LookupController:
         if self._cardladder is None or self._alt is None:
             raise RuntimeError("LookupController.start() must be called before run().")
 
+        # Raise both windows so a lookup is visible even if they were behind other apps.
+        await self.windows.bring_to_front()
+
         results = await asyncio.gather(
             self._cardladder.search(cert),
             self._alt.search(cert),

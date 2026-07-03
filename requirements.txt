@@ -1,1 +1,4 @@
 playwright>=1.44
+rumps>=0.4
+pyobjc-framework-Vision>=10.0
+pyobjc-framework-Quartz>=10.0

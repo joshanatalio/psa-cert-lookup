@@ -45,6 +45,27 @@
 - STILL TO VERIFY LIVE (needs user): launch → confirm both sites show logged-in (cookie
   decryption / keychain) → then finalize CardLadder overlay + Alt first-result selectors.
 
+## V2 — menu-bar app + image cert extraction (built)
+- [x] Add deps: `rumps`, `pyobjc-framework-Vision`, `pyobjc-framework-Quartz` (installed, imports OK)
+- [x] `cert_lookup/cert_extraction.py` — Vision OCR (`VNRecognizeTextRequest`) + `\b\d{7,10}\b`
+      filter. Verified end-to-end on a synthetic PSA label → returns exactly the cert, rejecting
+      grade/set/HP numbers. File and bytes (clipboard) paths both work.
+- [x] `cert_lookup/history.py` — stdlib sqlite at `~/.cert-dual-lookup/history.db`; upsert dedupe,
+      `recent(limit)`. Tested.
+- [x] `menubar.py` — rumps app; background asyncio loop + main-thread Timer draining a UI queue
+      (non-blocking lookups, safe AppKit mutation). Menu: Look Up Cert…, from Clipboard, from
+      Image…, History submenu (click to re-run), Quit (clean browser close). Verified headlessly
+      with a fake controller (async bridge, history record/refresh, menu structure) and a real
+      clipboard-image OCR round-trip.
+- [ ] USER GUI verification: launch `python3 menubar.py`, click the 🎴 menu, run a cert, try
+      clipboard/image, confirm History. (Requires real menu-bar interaction — can't automate.)
+
+### V2 notes
+- rumps lazily creates a submenu's NSMenu on first `add()`, so `_refresh_history()` guards the
+  first `clear()` with try/except AttributeError.
+- Homebrew is broken on this Mac (internal Apple mirror unreachable) — Vision needs no brew, which
+  is why it was the right OCR choice over tesseract.
+
 ## Results
 - Built the full tool under `cert-dual-lookup/`. Core in `cert_lookup/` (config, windows,
   sites/, controller); thin CLI in `run.py`.

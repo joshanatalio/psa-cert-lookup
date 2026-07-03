@@ -44,6 +44,20 @@
   and end the process with `sys.stdout.flush(); os._exit(0)` so a lingering thread/handle can't
   block the shell prompt from returning. Verified: hung 30s close → capped at the timeout.
 
+## L7 — rumps submenus: NSMenu is lazily created on first add()
+- **Failure mode:** `MenuItem.clear()` on a freshly-created submenu MenuItem raises
+  `AttributeError: 'NoneType' object has no attribute 'removeAllItems'` — its `_menu` (NSMenu)
+  doesn't exist until the first `.add()`.
+- **Prevention rule:** when rebuilding a rumps submenu, guard the initial `clear()` with
+  try/except AttributeError (or only clear if it already has items).
+
+## L8 — Bridge rumps (main-thread Cocoa) and asyncio without freezing or racing
+- **Pattern:** run the asyncio loop in a `daemon` thread (`loop.run_forever()`); submit work with
+  `asyncio.run_coroutine_threadsafe`; in the future's done-callback (runs on the loop thread) push
+  a UI closure onto a `queue.Queue`; drain that queue from a `rumps.Timer` (fires on the main
+  thread) so every AppKit mutation happens on the main thread. Lookups stay non-blocking (no
+  beachball) and UI updates stay thread-safe.
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the
