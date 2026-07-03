@@ -176,6 +176,15 @@ class WindowManager:
     def page(self, name: str) -> Page:
         return self.windows[name].page
 
+    def is_alive(self) -> bool:
+        """True only if the context and both windows are still open (user hasn't closed them)."""
+        if self._context is None or len(self.windows) < 2:
+            return False
+        try:
+            return all(not win.page.is_closed() for win in self.windows.values())
+        except Exception:
+            return False
+
     async def bring_to_front(self) -> None:
         """Raise both browser windows above other apps (best-effort)."""
         for win in self.windows.values():

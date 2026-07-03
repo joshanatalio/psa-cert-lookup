@@ -3,8 +3,8 @@
 Owns the window manager and both site drivers. Interface layers (CLI, web, Mac app) only need:
 
     controller = LookupController()
-    await controller.start()
-    await controller.run(cert)   # repeat per cert
+    await controller.start()     # optional: eager-open the windows (the CLI does this)
+    await controller.run(cert)   # opens windows lazily if needed; reopens if closed
     await controller.close()
 """
 
@@ -34,14 +34,23 @@ class LookupController:
         self._alt: AltDriver | None = None
 
     async def start(self, refresh_profile: bool = False) -> None:
-        await self.windows.start(refresh_profile=refresh_profile)
-        self._cardladder = CardLadderDriver(self.windows.page("cardladder"))
-        self._alt = AltDriver(self.windows.page("alt"))
-        # Land each window on its site so you can log in (first run) or are ready to query.
+        """Eagerly open the windows (used by the CLI). The menu-bar app skips this and lets the
+        first run() open them lazily."""
+        await self._ensure_windows(refresh_profile=refresh_profile)
+        # Land each window on its site (nice for the CLI; lazy callers let the drivers navigate).
         await asyncio.gather(
             self._goto(self.windows.page("cardladder"), config.CARDLADDER_BASE_URL),
             self._goto(self.windows.page("alt"), config.ALT_BASE_URL),
         )
+
+    async def _ensure_windows(self, refresh_profile: bool = False) -> None:
+        """Open the two windows if they aren't already up. If they were closed, relaunch."""
+        if self.windows.is_alive():
+            return
+        await self.windows.close()  # tear down any dead/closed state before relaunching
+        await self.windows.start(refresh_profile=refresh_profile)
+        self._cardladder = CardLadderDriver(self.windows.page("cardladder"))
+        self._alt = AltDriver(self.windows.page("alt"))
 
     @staticmethod
     async def _goto(page, url: str) -> None:
@@ -57,8 +66,10 @@ class LookupController:
         item page to that grade. Returns a LookupResult with per-site status, the grade, and a
         display label for history.
         """
+        # Open the windows on first use, or reopen them if they were closed.
+        await self._ensure_windows()
         if self._cardladder is None or self._alt is None:
-            raise RuntimeError("LookupController.start() must be called before run().")
+            raise RuntimeError("Windows failed to open.")
 
         # Raise both windows so a lookup is visible even if they were behind other apps.
         await self.windows.bring_to_front()

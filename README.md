@@ -48,8 +48,9 @@ Ctrl-C quits.
 python3 menubar.py
 ```
 
-A Great Ball icon (`assets/greatball.png`) appears in the menu bar. The two Chrome windows open on
-launch and are raised to the front on every lookup. Menu:
+A Great Ball icon (`assets/greatball.png`) appears in the menu bar. The two Chrome windows open
+**lazily on your first lookup** (not at app launch), and are raised to the front on every lookup.
+If you close the windows while the app keeps running, the next lookup just reopens them. Menu:
 
 - **Text field (top)** — type a cert and press ⏎. (Typing + Enter work; ⌘V paste and a blinking
   cursor do not — an NSMenu limitation — so use "Look Up from Clipboard" to paste.)

@@ -115,8 +115,9 @@ class CertLookupApp(rumps.App):
         global _APP
         _APP = self
         self._loop = asyncio.new_event_loop()
-        self._controller: LookupController | None = None
-        self._ready = False
+        # Created now (cheap — no browser); windows open lazily on the first lookup.
+        self._controller: LookupController = LookupController()
+        self._busy = False
         self._ui_queue: queue.Queue = queue.Queue()
         self._setup_done = False
         self._cert_field = None
@@ -137,9 +138,9 @@ class CertLookupApp(rumps.App):
         ]
         self._refresh_history()
 
-        # Background asyncio loop + one-shot startup (opens the two browser windows).
+        # Background asyncio loop for the async core. Windows are NOT opened here — the first
+        # lookup opens them (and reopens them if you close them while the app keeps running).
         threading.Thread(target=self._run_loop, daemon=True).start()
-        self._submit(self._startup(), self._on_startup_done)
 
         # Drain UI-update callbacks on the main thread.
         self._timer = rumps.Timer(self._drain_ui, 0.3)
@@ -149,10 +150,6 @@ class CertLookupApp(rumps.App):
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
-
-    async def _startup(self) -> None:
-        self._controller = LookupController()
-        await self._controller.start()
 
     def _submit(self, coro, on_done=None):
         """Schedule a coroutine on the background loop; on_done(result, error) runs on main thread."""
@@ -273,34 +270,20 @@ class CertLookupApp(rumps.App):
         if cert:
             self._do_lookup(cert)
 
-    def _on_startup_done(self, _result, error) -> None:
-        if error is not None:
-            self.title = "⚠️"
-            hint = ""
-            if "ProcessSingleton" in str(error) or "already in use" in str(error) or "closed" in str(error):
-                hint = (
-                    "\n\nThe browser profile is already in use — another copy of this app or "
-                    "run.py is probably still running. Quit it, then relaunch.\nYou can still "
-                    "Quit this window from the menu."
-                )
-            rumps.alert("Startup failed", f"{error}{hint}")
-        else:
-            self._ready = True
-            self.title = None
-
     # ---- lookups --------------------------------------------------------------------------
     def _do_lookup(self, raw_cert: str) -> None:
-        if not self._ready:
-            rumps.alert("Still starting", "The browser windows are still opening — try again in a moment.")
-            return
+        if self._busy:
+            return  # a lookup (possibly opening the windows) is already in flight
         cert = clean_cert(raw_cert)
         if not cert:
             rumps.alert("No cert", "That didn't contain a cert number.")
             return
 
-        self.title = "…"
+        self._busy = True
+        self.title = "…"  # opening windows on first use can take a few seconds
 
         def done(result, error):
+            self._busy = False
             self.title = None
             if error is not None:
                 rumps.alert("Lookup error", str(error))
