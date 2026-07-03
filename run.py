@@ -66,11 +66,12 @@ async def main() -> None:
                 print("  (no digits found — try again)")
                 continue
             print(f"  Looking up {cert}…")
-            status = await controller.run(cert)
-            for site, result in status.items():
-                mark = "✓" if result == "ok" else "✗"
-                detail = "" if result == "ok" else f" — {result}"
+            result = await controller.run(cert)
+            for site, status in result.status.items():
+                mark = "✓" if status == "ok" else "✗"
+                detail = "" if status == "ok" else f" — {status}"
                 print(f"  {mark} {site}{detail}")
+            print(f"  → {result.label}")
     except (EOFError, KeyboardInterrupt):
         pass
     finally:

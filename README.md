@@ -4,9 +4,16 @@ Enter a PSA cert number once; it drives **CardLadder** and **Alt** in two equal 
 Chrome windows using your existing logged-in sessions.
 
 - **CardLadder** (left): clicks the cert ("tag") button, types the cert, submits → resolves to the
-  card's profile page.
-- **Alt** (right): navigates to `browse?query=<cert>` and clicks the first result.
+  card's profile page. The resolved URL carries the grade (`grade:g10`); the summary chip gives the
+  card name.
+- **Alt** (right): navigates to `browse?query=<cert>`, clicks the first result, then switches to the
+  slab's grade view via `?grade=PSA-<n>.0` (Alt otherwise defaults to PSA 10) using the grade
+  resolved from CardLadder.
 - Windows open once and stay open — each new cert re-queries in place.
+- **Self-repairing startup:** if a previous instance left the profile locked ("Opening in existing
+  browser session" / TargetClosedError), launch kills only *our* leftover Chrome (matched by our
+  unique `--user-data-dir`) and clears stale locks, then retries. It never touches other Chrome
+  windows.
 
 Two front-ends, same core:
 - **`run.py`** — interactive terminal loop.
@@ -41,15 +48,22 @@ Ctrl-C quits.
 python3 menubar.py
 ```
 
-A 🎴 icon appears in the menu bar. The two Chrome windows open on launch (title shows 🎴… during a
-lookup). Menu:
+A Great Ball icon (`assets/greatball.png`) appears in the menu bar. The two Chrome windows open on
+launch and are raised to the front on every lookup. Menu:
 
-- **Look Up Cert…** — type/paste a cert.
+- **Text field (top)** — type a cert and press ⏎. (Typing + Enter work; ⌘V paste and a blinking
+  cursor do not — an NSMenu limitation — so use "Look Up from Clipboard" to paste.)
 - **Look Up from Clipboard** — reads a cert from clipboard text, or OCRs a copied image
-  (e.g. `Cmd+Ctrl+Shift+4` screenshots straight to the clipboard).
+  (e.g. `Cmd+Ctrl+Shift+4` screenshots straight to the clipboard). This is the paste path.
 - **Look Up from Image…** — pick an image file; OCR extracts the cert.
-- **History** — recent certs (✓ = both sites succeeded); click one to re-run it.
+- **Drag & drop** — drop an image file onto the menu-bar icon to look it up (same as Image…).
+- **History** — recent lookups shown as "<card name> PSA <grade>" (or "<cert> ？" if the name
+  couldn't be resolved); click one to re-run it.
+- **Start at Login** — toggle a LaunchAgent so the app auto-starts at login.
 - **Quit** — closes the browser windows cleanly.
+
+The app runs as a menu-bar-only accessory (hidden from the Dock / Cmd-Tab switcher); flip
+`HIDE_FROM_APP_SWITCHER` in `menubar.py` if you want it visible.
 
 Cert extraction OCRs the whole label with Apple's Vision framework (same engine as Live Text —
 offline, private, no extra install) and picks the one 7-10 digit purely-numeric token, which is

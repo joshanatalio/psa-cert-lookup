@@ -9,12 +9,57 @@ placement is resolution-independent and needs no macOS-specific dependencies.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import subprocess
+import time
 from dataclasses import dataclass
 
 from playwright.async_api import BrowserContext, Page, async_playwright
 
 from . import config, profile
 from .config import WindowSlot
+
+
+def _our_chrome_pids() -> list[int]:
+    """PIDs of Chrome processes launched on OUR profile (never anyone else's)."""
+    marker = f"--user-data-dir={config.TOOL_PROFILE}"
+    try:
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,command="], capture_output=True, text=True
+        ).stdout
+    except Exception:
+        return []
+    pids: list[int] = []
+    for line in out.splitlines():
+        if marker in line:  # literal substring match on our unique profile path
+            head = line.strip().split(None, 1)[0]
+            if head.isdigit():
+                pids.append(int(head))
+    return pids
+
+
+def _kill_our_chrome() -> None:
+    """Terminate leftover Chrome from a previous run of THIS tool. Safe: matches our profile
+    path only, so it can never close the user's normal Chrome windows."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        pids = _our_chrome_pids()
+        if not pids:
+            return
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        time.sleep(0.6)
+
+
+def _clear_singleton_locks() -> None:
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        try:
+            (config.TOOL_PROFILE / name).unlink()
+        except OSError:
+            pass
 
 
 @dataclass
@@ -38,20 +83,7 @@ class WindowManager:
             print(f"  Copied Chrome profile '{config.SOURCE_CHROME_PROFILE}' → {config.TOOL_PROFILE}")
 
         self._playwright = await async_playwright().start()
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir=str(config.TOOL_PROFILE),
-            headless=False,
-            channel=config.BROWSER_CHANNEL,
-            no_viewport=True,  # let the real OS window drive size; we position it via CDP
-            # Strip signals that mark this as automated (Cloudflare/Google block them) AND drop
-            # --use-mock-keychain so the copied, encrypted cookies can actually be decrypted.
-            ignore_default_args=["--enable-automation", "--use-mock-keychain"],
-            args=[
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
+        self._context = await self._launch_context_with_repair()
         self._context.set_default_timeout(config.DEFAULT_TIMEOUT_MS)
         await self._context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
@@ -65,6 +97,44 @@ class WindowManager:
         self.windows["cardladder"] = ManagedWindow("cardladder", page1)
         self.windows["alt"] = ManagedWindow("alt", page2)
         await self._position_all()
+
+    async def _launch_context_with_repair(self) -> BrowserContext:
+        """Launch the persistent context, self-repairing a locked/leftover profile.
+
+        The common failure ("Opening in existing browser session" / TargetClosedError /
+        ProcessSingleton) means a previous run's Chrome is still holding our profile. We kill
+        only OUR leftover Chrome and clear stale lock files, then retry.
+        """
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                return await self._create_context()
+            except Exception as error:  # noqa: BLE001
+                last_error = error
+                if attempt == 2:
+                    break
+                print(f"  Browser launch failed ({error}); self-repairing profile and retrying…")
+                _kill_our_chrome()
+                _clear_singleton_locks()
+                await asyncio.sleep(1.0)
+        assert last_error is not None
+        raise last_error
+
+    async def _create_context(self) -> BrowserContext:
+        return await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=str(config.TOOL_PROFILE),
+            headless=False,
+            channel=config.BROWSER_CHANNEL,
+            no_viewport=True,  # let the real OS window drive size; we position it via CDP
+            # Strip signals that mark this as automated (Cloudflare/Google block them) AND drop
+            # --use-mock-keychain so the copied, encrypted cookies can actually be decrypted.
+            ignore_default_args=["--enable-automation", "--use-mock-keychain"],
+            args=[
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
 
     async def _open_new_window(self, existing: Page) -> Page:
         cdp = await self._context.new_cdp_session(existing)

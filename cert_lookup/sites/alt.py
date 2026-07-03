@@ -31,6 +31,21 @@ class AltDriver:
         await self.page.goto(config.alt_url(cert), wait_until="domcontentloaded")
         await self._click_first_result()
 
+    async def apply_grade(self, grade: str) -> None:
+        """Switch the open item page to a specific grade view (Alt defaults to PSA 10)."""
+        # Poll for the item URL (SPA navigation from the result click); avoid wait_for_url's
+        # load-event wait, which can hang on an SPA.
+        for _ in range(30):
+            if "/itm/" in (self.page.url or ""):
+                break
+            await self.page.wait_for_timeout(150)
+        url = self.page.url
+        if "/itm/" not in url or "grade=" in url:
+            return  # not on an item page, or already graded
+        grade_value = grade if "." in grade else f"{grade}.0"
+        sep = "&" if "?" in url else "?"
+        await self.page.goto(f"{url}{sep}grade=PSA-{grade_value}", wait_until="domcontentloaded")
+
     async def _click_first_result(self) -> None:
         for selector in FIRST_RESULT_SELECTORS:
             locator = self.page.locator(selector).first

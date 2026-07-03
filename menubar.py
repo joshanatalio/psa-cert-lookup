@@ -15,25 +15,49 @@ thread.
 from __future__ import annotations
 
 import asyncio
+import os
+import plistlib
 import queue
+import subprocess
 import sys
 import threading
 import traceback
 
 import objc
 import rumps
-from AppKit import NSDragOperationCopy, NSImage, NSStatusBarButton, NSTextField, NSView
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyRegular,
+    NSDragOperationCopy,
+    NSImage,
+    NSStatusBarButton,
+    NSTextField,
+    NSView,
+)
 from Foundation import NSObject
 
 from cert_lookup import LookupController, cert_extraction, history
 from cert_lookup.config import clean_cert
+
+# --- app settings ---
+# Hide from the Dock / Cmd-Tab app switcher (behaves like a proper menu-bar-only app). Flip to
+# False if you'd rather see it in the switcher.
+HIDE_FROM_APP_SWITCHER = True
+ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "greatball.png")
+LAUNCH_AGENT_LABEL = "com.certlookup.menubar"
+LAUNCH_AGENT_PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{LAUNCH_AGENT_LABEL}.plist")
 
 # Set to the running app instance so the (class-level) drag category can reach it.
 _APP = None
 
 
 class _FieldTarget(NSObject):
-    """Target for the inline menu text field; fires the handler on Enter."""
+    """Target for the inline menu text field; fires the handler on Enter.
+
+    Note: editable fields inside an NSMenu accept typing + Enter but not ⌘V paste or a visible
+    cursor (an OS limitation). For pasting, use "Look Up from Clipboard".
+    """
 
     def initWithHandler_(self, handler):
         self = objc.super(_FieldTarget, self).init()
@@ -80,26 +104,35 @@ except Exception:  # noqa: BLE001
 
 class CertLookupApp(rumps.App):
     def __init__(self) -> None:
-        super().__init__("Cert Lookup", title="🔎", quit_button=None)
+        icon = ICON_PATH if os.path.exists(ICON_PATH) else None
+        super().__init__(
+            "Cert Lookup",
+            title=None if icon else "🔎",
+            icon=icon,
+            template=False,
+            quit_button=None,
+        )
         global _APP
         _APP = self
         self._loop = asyncio.new_event_loop()
         self._controller: LookupController | None = None
         self._ready = False
         self._ui_queue: queue.Queue = queue.Queue()
-        self._drag_registered = False
+        self._setup_done = False
         self._cert_field = None
 
         self._history_menu = rumps.MenuItem("History")
+        self._login_item = rumps.MenuItem("Start at Login", callback=self.on_toggle_login)
+        self._login_item.state = 1 if self._start_at_login_enabled() else 0
         self.menu = [
             self._build_field_item(),
             None,
-            rumps.MenuItem("Look Up Cert…", callback=self.on_lookup_cert),
             rumps.MenuItem("Look Up from Clipboard", callback=self.on_lookup_clipboard),
             rumps.MenuItem("Look Up from Image…", callback=self.on_lookup_image),
             None,
             self._history_menu,
             None,
+            self._login_item,
             rumps.MenuItem("Quit", callback=self.on_quit),
         ]
         self._refresh_history()
@@ -139,8 +172,8 @@ class CertLookupApp(rumps.App):
         return fut
 
     def _drain_ui(self, _timer) -> None:
-        if not self._drag_registered:
-            self._register_drag()
+        if not self._setup_done:
+            self._post_launch_setup()
         while True:
             try:
                 fn = self._ui_queue.get_nowait()
@@ -153,19 +186,26 @@ class CertLookupApp(rumps.App):
 
     # ---- inline text field + drag/drop ----------------------------------------------------
     def _build_field_item(self):
-        """Top menu item hosting an editable text field: paste a cert, press Enter."""
+        """Top menu item hosting a text field: type a cert, press Enter.
+
+        Typing + Enter work; ⌘V paste and a blinking cursor do not (NSMenu limitation) — use
+        "Look Up from Clipboard" to paste a copied cert.
+        """
         item = rumps.MenuItem("cert-field")
         try:
             self._field_target = _FieldTarget.alloc().initWithHandler_(self._field_submitted)
             container = NSView.alloc().initWithFrame_(((0, 0), (240, 30)))
             field = NSTextField.alloc().initWithFrame_(((14, 4), (212, 22)))
-            field.setPlaceholderString_("Paste cert #, press ⏎")
+            field.setPlaceholderString_("Type cert #, press ⏎")
+            field.setEditable_(True)
+            field.setSelectable_(True)
+            field.setBezeled_(True)
             field.setTarget_(self._field_target)
             field.setAction_("submit:")
             container.addSubview_(field)
             item._menuitem.setView_(container)
             self._cert_field = field
-        except Exception:  # noqa: BLE001 - fall back to the "Look Up Cert…" dialog item
+        except Exception:  # noqa: BLE001 - fall back to a dialog item if the view can't be built
             traceback.print_exc()
             item.title = "Look Up Cert…"
             item.set_callback(self.on_lookup_cert)
@@ -182,19 +222,37 @@ class CertLookupApp(rumps.App):
         if value:
             self._do_lookup(value)
 
-    def _register_drag(self) -> None:
-        # Attempt once (after launch, when the status button exists); never retry-spam.
-        self._drag_registered = True
-        if not _DRAG_CATEGORY_OK:
-            return
+    # ---- post-launch setup + drag/drop ----------------------------------------------------
+    def _post_launch_setup(self) -> None:
+        """One-time setup that needs the app fully launched (status button + menu exist)."""
+        self._setup_done = True
+
+        # The field's menu item has no action, so NSMenu auto-enable would disable it (and its
+        # embedded field) — turn auto-enable off so typing into the field works.
         try:
-            button = self._nsapp.nsstatusitem.button()
-            if button is not None:
-                button.registerForDraggedTypes_(
-                    ["public.file-url", "public.png", "public.tiff", "public.jpeg"]
-                )
+            self._menu._menu.setAutoenablesItems_(False)
         except Exception:  # noqa: BLE001
             traceback.print_exc()
+
+        # Hide from Dock / app switcher (menu-bar-only app).
+        if HIDE_FROM_APP_SWITCHER:
+            try:
+                NSApplication.sharedApplication().setActivationPolicy_(
+                    NSApplicationActivationPolicyAccessory
+                )
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+
+        # Register the status-bar button as a drop target for images.
+        if _DRAG_CATEGORY_OK:
+            try:
+                button = self._nsapp.nsstatusitem.button()
+                if button is not None:
+                    button.registerForDraggedTypes_(
+                        ["public.file-url", "public.png", "public.tiff", "public.jpeg"]
+                    )
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
 
     def _handle_drop(self, pasteboard) -> None:
         """Called on the main thread when an image is dropped on the menu-bar icon."""
@@ -217,9 +275,9 @@ class CertLookupApp(rumps.App):
 
     def _on_startup_done(self, _result, error) -> None:
         if error is not None:
-            self.title = "🔎⚠️"
+            self.title = "⚠️"
             hint = ""
-            if "ProcessSingleton" in str(error) or "already in use" in str(error):
+            if "ProcessSingleton" in str(error) or "already in use" in str(error) or "closed" in str(error):
                 hint = (
                     "\n\nThe browser profile is already in use — another copy of this app or "
                     "run.py is probably still running. Quit it, then relaunch.\nYou can still "
@@ -228,7 +286,7 @@ class CertLookupApp(rumps.App):
             rumps.alert("Startup failed", f"{error}{hint}")
         else:
             self._ready = True
-            self.title = "🔎"
+            self.title = None
 
     # ---- lookups --------------------------------------------------------------------------
     def _do_lookup(self, raw_cert: str) -> None:
@@ -240,30 +298,45 @@ class CertLookupApp(rumps.App):
             rumps.alert("No cert", "That didn't contain a cert number.")
             return
 
-        self.title = "🔎…"
+        self.title = "…"
 
-        def done(status, error):
-            self.title = "🔎"
+        def done(result, error):
+            self.title = None
             if error is not None:
                 rumps.alert("Lookup error", str(error))
                 return
-            history.record(cert, status or {})
+            history.record(cert, result.status, result.label)
             self._refresh_history()
-            failed = {k: v for k, v in (status or {}).items() if v != "ok"}
+            failed = {k: v for k, v in result.status.items() if v != "ok"}
             if failed:
                 detail = "\n".join(f"• {k}: {v}" for k, v in failed.items())
-                rumps.alert(f"Looked up {cert} (with issues)", detail)
+                rumps.alert(f"Looked up {result.label} (with issues)", detail)
 
         self._submit(self._controller.run(cert), done)
 
     def on_lookup_cert(self, _) -> None:
+        # Pre-fill from the clipboard if it holds a cert, so a copied cert is one click + Enter.
+        default = ""
+        certs = cert_extraction.certs_from_text(self._clipboard_text())
+        if len(certs) == 1:
+            default = certs[0]
         resp = rumps.Window(
-            message="Enter a PSA cert number:",
+            message="Enter or paste a PSA cert number, then press Enter:",
             title="Look Up Cert",
-            dimensions=(220, 22),
+            default_text=default,
+            dimensions=(240, 22),
         ).run()
         if resp.clicked and resp.text.strip():
             self._do_lookup(resp.text)
+
+    @staticmethod
+    def _clipboard_text() -> str:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+
+        try:
+            return NSPasteboard.generalPasteboard().stringForType_(NSPasteboardTypeString) or ""
+        except Exception:  # noqa: BLE001
+            return ""
 
     def on_lookup_clipboard(self, _) -> None:
         cert = self._cert_from_clipboard()
@@ -346,19 +419,54 @@ class CertLookupApp(rumps.App):
             self._history_menu.clear()
         except AttributeError:
             pass
-        entries = history.recent(10)
+        entries = history.recent(15)
         if not entries:
             self._history_menu.add(rumps.MenuItem("(no history yet)"))
             return
         for entry in entries:
-            mark = "✓" if (entry.cardladder == "ok" and entry.alt == "ok") else "•"
-            item = rumps.MenuItem(f"{mark} {entry.cert}", callback=self._make_history_cb(entry.cert))
+            item = rumps.MenuItem(entry.label, callback=self._make_history_cb(entry.cert))
             self._history_menu.add(item)
 
     def _make_history_cb(self, cert: str):
         def _cb(_):
             self._do_lookup(cert)
         return _cb
+
+    # ---- start at login -------------------------------------------------------------------
+    def _start_at_login_enabled(self) -> bool:
+        return os.path.exists(LAUNCH_AGENT_PLIST)
+
+    def on_toggle_login(self, sender) -> None:
+        try:
+            if self._start_at_login_enabled():
+                self._disable_start_at_login()
+                sender.state = 0
+            else:
+                self._enable_start_at_login()
+                sender.state = 1
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            rumps.alert("Start at Login failed", str(exc))
+
+    def _enable_start_at_login(self) -> None:
+        os.makedirs(os.path.dirname(LAUNCH_AGENT_PLIST), exist_ok=True)
+        script = os.path.abspath(__file__)
+        plist = {
+            "Label": LAUNCH_AGENT_LABEL,
+            "ProgramArguments": [sys.executable, script],
+            "RunAtLoad": True,
+            "WorkingDirectory": os.path.dirname(script),
+        }
+        with open(LAUNCH_AGENT_PLIST, "wb") as fh:
+            plistlib.dump(plist, fh)
+        subprocess.run(["launchctl", "load", "-w", LAUNCH_AGENT_PLIST], capture_output=True)
+
+    def _disable_start_at_login(self) -> None:
+        subprocess.run(["launchctl", "unload", "-w", LAUNCH_AGENT_PLIST], capture_output=True)
+        try:
+            os.remove(LAUNCH_AGENT_PLIST)
+        except OSError:
+            pass
 
     # ---- quit -----------------------------------------------------------------------------
     def on_quit(self, _) -> None:

@@ -58,6 +58,22 @@
   thread) so every AppKit mutation happens on the main thread. Lookups stay non-blocking (no
   beachball) and UI updates stay thread-safe.
 
+## L9 — "Opening in existing browser session" = self-repairable profile lock
+- **Failure mode:** `launch_persistent_context` intermittently fails with `TargetClosedError` and
+  a browser log line `Opening in existing browser session` — a leftover Chrome from a prior/crashed
+  run still holds the profile's Singleton lock, so the new Chrome defers to it and the launched
+  process exits.
+- **Prevention rule:** wrap the launch in a retry that, on failure, kills ONLY our Chrome (match
+  processes by our unique `--user-data-dir=<profile>` string — never a broad `pkill chrome`) and
+  deletes stale `Singleton*` files, then retries. Safe because the match is scoped to our profile
+  path; the user's normal Chrome uses a different user-data-dir. See windows.py `_kill_our_chrome`.
+
+## L10 — Alt item pages default to PSA 10; drive grade from CardLadder
+- Alt's `/itm/<id>/research` shows the PSA 10 grade unless you append `?grade=PSA-<n>.0`. The slab's
+  grade isn't in the Alt URL — resolve it from CardLadder's filter URL (`grade%3Ag<n>`) and apply it
+  to Alt after the first-result click. The readable card name resolves asynchronously in the
+  CardLadder summary chip (first shows `psa-<id>`, then the name), so poll for the resolved name.
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the
