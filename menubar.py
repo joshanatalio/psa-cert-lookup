@@ -80,7 +80,7 @@ except Exception:  # noqa: BLE001
 
 class CertLookupApp(rumps.App):
     def __init__(self) -> None:
-        super().__init__("Cert Lookup", title="🎴", quit_button=None)
+        super().__init__("Cert Lookup", title="🔎", quit_button=None)
         global _APP
         _APP = self
         self._loop = asyncio.new_event_loop()
@@ -217,7 +217,7 @@ class CertLookupApp(rumps.App):
 
     def _on_startup_done(self, _result, error) -> None:
         if error is not None:
-            self.title = "🎴⚠️"
+            self.title = "🔎⚠️"
             hint = ""
             if "ProcessSingleton" in str(error) or "already in use" in str(error):
                 hint = (
@@ -228,7 +228,7 @@ class CertLookupApp(rumps.App):
             rumps.alert("Startup failed", f"{error}{hint}")
         else:
             self._ready = True
-            self.title = "🎴"
+            self.title = "🔎"
 
     # ---- lookups --------------------------------------------------------------------------
     def _do_lookup(self, raw_cert: str) -> None:
@@ -240,10 +240,10 @@ class CertLookupApp(rumps.App):
             rumps.alert("No cert", "That didn't contain a cert number.")
             return
 
-        self.title = "🎴…"
+        self.title = "🔎…"
 
         def done(status, error):
-            self.title = "🎴"
+            self.title = "🔎"
             if error is not None:
                 rumps.alert("Lookup error", str(error))
                 return
