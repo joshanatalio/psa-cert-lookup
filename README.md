@@ -18,7 +18,7 @@ Chrome windows using your existing logged-in sessions.
 Three front-ends, same core:
 - **`run.py`** — interactive terminal loop.
 - **`menubar.py`** — macOS menu-bar app with history and image/clipboard cert extraction.
-- **`server.py`** — FastAPI server for phone access (screenshots of both result pages).
+- **`server.py`** — FastAPI server for phone access (parsed CardLadder/Alt data as JSON).
 
 ## Setup
 
@@ -73,8 +73,9 @@ always the PSA cert. If more than one number qualifies, it asks you to confirm r
 
 ## Phone access (`server.py`)
 
-Look up certs from your phone. The Mac does the automation (as always) and sends back
-**screenshots** of the two result pages — which sidesteps CardLadder/Alt not being mobile-friendly.
+Look up certs from your phone. The Mac does the automation (as always) and sends back **parsed
+data** — sales, listings, prices — as structured JSON, which sidesteps CardLadder/Alt not being
+mobile-friendly.
 
 ```bash
 python3 -m uvicorn server:app --host 0.0.0.0 --port 8000
@@ -86,19 +87,22 @@ Then, from a browser (Mac or phone), open `http://<host>:8000`. You can:
   menu-bar app) and looks it up.
 
 Each result shows an **at-a-glance summary** (CardLadder last sale + recent average, Alt value +
-range) plus **screenshots** of both result pages for detail. The first lookup opens the browser
-(~10-15s); later ones reuse it.
+range), then **tabs** between CardLadder (all rendered sales — price, date, type, platform, title)
+and Alt (live listings — price, bids, time left, source — plus recent sales). The first lookup
+opens the browser (~10-15s); later ones reuse it.
 
 - **From your phone on the same Wi-Fi:** open `http://<mac-LAN-ip>:8000` (find it with
   `ipconfig getifaddr en0`). **Away from home:** install **Tailscale** (free) on the Mac and phone
   and use `http://<mac-name>:8000`. No App Store. "Add to Home Screen" in Safari for an app icon.
   (If the phone can't connect, allow incoming connections for Python in macOS Firewall settings.)
 - The server runs **headful but off-screen** (`config.HIDE_WINDOWS`) — headless trips CardLadder's
-  Cloudflare, and a minimized window stops rendering, so the two windows are positioned off-screen
-  where they still render for screenshots but don't clutter the Mac.
+  Cloudflare, and a minimized window stops rendering (needed so parsing can read the live DOM), so
+  the two windows are positioned off-screen where they still render but don't clutter the Mac.
 - It uses its **own** profile copy (`~/.cert-dual-lookup/chrome-profile-server`), so it runs fine
   alongside the menu-bar app (Chromium locks a user-data-dir). Requests are serialized (one browser
   drives both sites).
+- Parsing lives in `cert_lookup/parse.py` — `innerText` text patterns (not CSS classes, which churn
+  on these SPAs), grouped at the top like the site selectors.
 
 ## Architecture
 
@@ -115,8 +119,8 @@ cert_lookup/            # UI-agnostic core (imported by all front-ends)
   history.py            # sqlite lookup history (~/.cert-dual-lookup/history.db)
 run.py                  # thin interactive CLI
 menubar.py              # thin macOS menu-bar front-end
-server.py               # FastAPI phone server (screenshots); web/index.html is the mobile page
-web/index.html          # mobile page (text box + result screenshots)
+server.py               # FastAPI phone server (parsed JSON, photo OCR); serves web/index.html
+web/index.html          # mobile page (text box, camera/library upload, CardLadder/Alt tabs)
 ```
 
 Any front-end just does:

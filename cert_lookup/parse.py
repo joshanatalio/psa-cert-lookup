@@ -25,19 +25,37 @@ _CL_JS = r"""() => {
 }"""
 
 _ALT_JS = r"""() => {
-  let out = { value: null, range: null };
+  let value = null, range = null;
+  const listings = [], txns = [];
   for (const e of document.querySelectorAll('*')) {
     if (e.children.length > 4) continue;
     const t = (e.innerText || '').replace(/\s+/g, ' ').trim();
-    if (/VALUE\s*\$[\d,]/i.test(t) && t.length < 70) {
+    if (!t) continue;
+    if (!value && /VALUE\s*\$[\d,]/i.test(t) && t.length < 70) {
       const m = t.match(/\$[\d,]+(?:\.\d+)?/g) || [];
-      if (m.length) out.value = m[0];
-      if (m.length >= 3) out.range = m[1] + ' – ' + m[2];
-      break;
+      if (m.length) value = m[0];
+      if (m.length >= 3) range = m[1] + ' – ' + m[2];
     }
+    if (t.length < 90 && /(fixed price|auction)/i.test(t) && /listing in/i.test(t) && /\$[\d,]/.test(t))
+      listings.push(t);
+    if (t.length < 50 && /^(fixed price|auction)\s+[A-Z][a-z]{2}\s+\d/i.test(t) && /\$[\d,]/.test(t))
+      txns.push(t);
   }
-  return out;
+  const uniq = a => [...new Set(a)];
+  return { value, range, listings: uniq(listings).slice(0, 15), txns: uniq(txns).slice(0, 15) };
 }"""
+
+# "Auction 3 bids |3d 23h $510 live listing in eBay" / "Fixed price $2,082 live listing in eBay"
+_ALT_LISTING = re.compile(
+    r"(?P<type>Fixed price|Auction)\s*(?:(?P<bids>\d+)\s*bids)?\s*(?:\|\s*(?P<time>[^$|]+?)\s*)?"
+    r"\$(?P<price>[\d,]+)(?:\D+listing in\s*(?P<source>\w+))?",
+    re.I,
+)
+# "Auction Jul 1, 2026 $1,438"
+_ALT_TXN = re.compile(
+    r"(?P<type>Fixed price|Auction)\s+(?P<date>[A-Z][a-z]{2}\s+\d{1,2},\s*\d{4})\s*\$(?P<price>[\d,]+)",
+    re.I,
+)
 
 
 def _money(text: str | None) -> float | None:
@@ -82,5 +100,40 @@ async def parse_cardladder(page) -> dict:
 
 
 async def parse_alt(page) -> dict:
+    # Nudge lazy sections (listings, recent transactions) to render before reading.
+    for _ in range(4):
+        await page.mouse.wheel(0, 1400)
+        await page.wait_for_timeout(450)
+    await page.evaluate("() => window.scrollTo(0, 0)")
     raw = await page.evaluate(_ALT_JS)
-    return {"alt_value": _money(raw.get("value")), "alt_range": raw.get("range")}
+
+    listings = []
+    for line in raw.get("listings", []):
+        m = _ALT_LISTING.search(line)
+        if m:
+            listings.append(
+                {
+                    "type": m.group("type").strip().title(),
+                    "bids": int(m.group("bids")) if m.group("bids") else None,
+                    "time_left": (m.group("time") or "").strip() or None,
+                    "price": _money(m.group("price")),
+                    "source": m.group("source"),
+                }
+            )
+    sales = []
+    for line in raw.get("txns", []):
+        m = _ALT_TXN.search(line)
+        if m:
+            sales.append(
+                {
+                    "type": m.group("type").strip().title(),
+                    "date": m.group("date").strip(),
+                    "price": _money(m.group("price")),
+                }
+            )
+    return {
+        "alt_value": _money(raw.get("value")),
+        "alt_range": raw.get("range"),
+        "listings": listings,
+        "sales": sales,
+    }
