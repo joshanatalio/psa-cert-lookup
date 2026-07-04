@@ -15,9 +15,10 @@ Chrome windows using your existing logged-in sessions.
   unique `--user-data-dir`) and clears stale locks, then retries. It never touches other Chrome
   windows.
 
-Two front-ends, same core:
+Three front-ends, same core:
 - **`run.py`** — interactive terminal loop.
 - **`menubar.py`** — macOS menu-bar app with history and image/clipboard cert extraction.
+- **`server.py`** — FastAPI server for phone access (screenshots of both result pages).
 
 ## Setup
 
@@ -70,10 +71,34 @@ Cert extraction OCRs the whole label with Apple's Vision framework (same engine 
 offline, private, no extra install) and picks the one 7-10 digit purely-numeric token, which is
 always the PSA cert. If more than one number qualifies, it asks you to confirm rather than guess.
 
+## Phone access (`server.py`)
+
+Look up certs from your phone. The Mac does the automation (as always) and sends back
+**screenshots** of the two result pages — which sidesteps CardLadder/Alt not being mobile-friendly.
+
+```bash
+python3 -m uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+Then, from a browser (Mac or phone), open `http://<host>:8000`, type a cert, and get the label +
+two screenshots (CardLadder sales/value, Alt value/populations). The first lookup opens the
+browser (~10-15s); later ones reuse it.
+
+- **From your phone:** install **Tailscale** (free) on the Mac and phone, then open
+  `http://<mac-name>:8000` on the phone (its Tailscale MagicDNS name). No port-forwarding, no App
+  Store. "Add to Home Screen" in Safari for an app-like icon.
+- The server uses its **own** profile copy (`~/.cert-dual-lookup/chrome-profile-server`), so it runs
+  fine alongside the menu-bar app (Chromium locks a user-data-dir). Both are copies of your one
+  logged-in Chrome.
+- Requests are serialized (one browser drives both sites). Screenshots are capped in height so the
+  phone isn't scrolling a huge image; the key data is near the top.
+- Roadmap: Phase 2 adds parsed JSON (prices/sales as structured data — verified feasible), Phase 3
+  adds photographing a slab on the phone (reuses the Vision OCR in `cert_extraction.py`).
+
 ## Architecture
 
 ```
-cert_lookup/            # UI-agnostic core (imported by both front-ends)
+cert_lookup/            # UI-agnostic core (imported by all front-ends)
   config.py             # profile copy source/dest, site URLs, window layout, cert cleaning
   profile.py            # copy the real Chrome profile so logins are inherited
   windows.py            # one Chrome, two side-by-side windows (CDP), on the copied profile
@@ -85,6 +110,8 @@ cert_lookup/            # UI-agnostic core (imported by both front-ends)
   history.py            # sqlite lookup history (~/.cert-dual-lookup/history.db)
 run.py                  # thin interactive CLI
 menubar.py              # thin macOS menu-bar front-end
+server.py               # FastAPI phone server (screenshots); web/index.html is the mobile page
+web/index.html          # mobile page (text box + result screenshots)
 ```
 
 Any front-end just does:

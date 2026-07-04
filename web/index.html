@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Cert Lookup</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 16px/1.4 -apple-system, system-ui, sans-serif;
+      background: #f2f2f7; color: #111;
+      padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom);
+    }
+    @media (prefers-color-scheme: dark) { body { background: #000; color: #eee; } }
+    header { position: sticky; top: 0; padding: 12px 0; background: inherit; }
+    h1 { font-size: 17px; margin: 4px 0 10px; }
+    form { display: flex; gap: 8px; }
+    input {
+      flex: 1; font-size: 17px; padding: 12px; border-radius: 10px;
+      border: 1px solid #ccc; background: #fff; color: #111;
+    }
+    @media (prefers-color-scheme: dark) { input { background: #1c1c1e; color: #eee; border-color: #333; } }
+    button {
+      font-size: 17px; font-weight: 600; padding: 12px 16px; border: 0;
+      border-radius: 10px; background: #0a84ff; color: #fff;
+    }
+    button:disabled { opacity: .5; }
+    #status { min-height: 20px; margin: 10px 2px; font-size: 14px; color: #666; }
+    #label { font-weight: 600; margin: 6px 2px 12px; }
+    .shot { margin-bottom: 16px; }
+    .shot h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 0 2px 6px; }
+    .shot img { width: 100%; border-radius: 12px; border: 1px solid #0002; display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔴 PSA Cert Lookup</h1>
+    <form id="f">
+      <input id="cert" inputmode="numeric" autocomplete="off" placeholder="Enter a PSA cert #" />
+      <button id="go" type="submit">Look up</button>
+    </form>
+    <div id="status"></div>
+    <div id="label"></div>
+  </header>
+  <main id="out"></main>
+
+  <script>
+    const f = document.getElementById('f');
+    const certEl = document.getElementById('cert');
+    const go = document.getElementById('go');
+    const statusEl = document.getElementById('status');
+    const labelEl = document.getElementById('label');
+    const out = document.getElementById('out');
+
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const cert = certEl.value.replace(/\D/g, '');
+      if (!cert) return;
+      go.disabled = true;
+      statusEl.textContent = 'Looking up ' + cert + '… (first lookup opens the browser, ~10s)';
+      labelEl.textContent = '';
+      out.innerHTML = '';
+      try {
+        const res = await fetch('/lookup?cert=' + encodeURIComponent(cert));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        labelEl.textContent = data.label || cert;
+        const notes = Object.entries(data.status || {})
+          .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
+        statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : 'Done.';
+        for (const [name, uri] of Object.entries(data.screenshots || {})) {
+          if (!uri) continue;
+          const div = document.createElement('div');
+          div.className = 'shot';
+          div.innerHTML = '<h2>' + name + '</h2>';
+          const img = document.createElement('img');
+          img.src = uri;
+          div.appendChild(img);
+          out.appendChild(div);
+        }
+      } catch (err) {
+        statusEl.textContent = '❌ ' + err.message;
+      } finally {
+        go.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
