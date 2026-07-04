@@ -30,6 +30,14 @@
     button:disabled { opacity: .5; }
     #status { min-height: 20px; margin: 10px 2px; font-size: 14px; color: #666; }
     #label { font-weight: 600; margin: 6px 2px 12px; }
+    #summary { display: flex; gap: 8px; margin: 0 0 14px; }
+    .card {
+      flex: 1; background: #fff; border-radius: 12px; padding: 12px 14px; border: 1px solid #0001;
+    }
+    @media (prefers-color-scheme: dark) { .card { background: #1c1c1e; border-color: #333; } }
+    .card .name { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #888; }
+    .card .val { font-size: 24px; font-weight: 700; margin: 2px 0; }
+    .card .sub { font-size: 12px; color: #888; }
     .shot { margin-bottom: 16px; }
     .shot h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 0 2px 6px; }
     .shot img { width: 100%; border-radius: 12px; border: 1px solid #0002; display: block; }
@@ -44,6 +52,7 @@
     </form>
     <div id="status"></div>
     <div id="label"></div>
+    <div id="summary"></div>
   </header>
   <main id="out"></main>
 
@@ -53,7 +62,30 @@
     const go = document.getElementById('go');
     const statusEl = document.getElementById('status');
     const labelEl = document.getElementById('label');
+    const summaryEl = document.getElementById('summary');
     const out = document.getElementById('out');
+
+    const money = (n) => (n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 }));
+
+    function renderSummary(data) {
+      summaryEl.innerHTML = '';
+      if (!data) return;
+      const cl = data.cardladder || {}, alt = data.alt || {};
+      const cards = [
+        {
+          name: 'CardLadder · last sale',
+          val: money(cl.last_sale),
+          sub: (cl.last_date ? cl.last_date : '') + (cl.recent_avg != null ? '  ·  avg ' + money(cl.recent_avg) : ''),
+        },
+        { name: 'Alt · value', val: money(alt.alt_value), sub: alt.alt_range || '' },
+      ];
+      for (const c of cards) {
+        const el = document.createElement('div');
+        el.className = 'card';
+        el.innerHTML = '<div class="name">' + c.name + '</div><div class="val">' + c.val + '</div><div class="sub">' + c.sub + '</div>';
+        summaryEl.appendChild(el);
+      }
+    }
 
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -62,12 +94,14 @@
       go.disabled = true;
       statusEl.textContent = 'Looking up ' + cert + '… (first lookup opens the browser, ~10s)';
       labelEl.textContent = '';
+      summaryEl.innerHTML = '';
       out.innerHTML = '';
       try {
         const res = await fetch('/lookup?cert=' + encodeURIComponent(cert));
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         labelEl.textContent = data.label || cert;
+        renderSummary(data.data);
         const notes = Object.entries(data.status || {})
           .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
         statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : 'Done.';

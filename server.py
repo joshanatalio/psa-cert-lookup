@@ -26,7 +26,7 @@ from cert_lookup import config
 
 config.TOOL_PROFILE = config.TOOL_DATA_ROOT / "chrome-profile-server"
 
-from cert_lookup import LookupController  # noqa: E402 - after the profile override above
+from cert_lookup import LookupController, parse  # noqa: E402 - after the profile override above
 from cert_lookup.config import clean_cert  # noqa: E402
 
 from fastapi import FastAPI, Query  # noqa: E402
@@ -61,7 +61,7 @@ async def lookup(cert: str = Query(...)):
     async with lock:
         try:
             result = await controller.run(cleaned)
-            shots = await _screenshots()
+            data, shots = await _collect()
         except Exception as exc:  # noqa: BLE001
             return JSONResponse({"error": str(exc)}, status_code=500)
     return {
@@ -69,6 +69,7 @@ async def lookup(cert: str = Query(...)):
         "label": result.label,
         "grade": result.grade,
         "status": result.status,
+        "data": data,
         "screenshots": shots,
     }
 
@@ -81,23 +82,30 @@ _SETTLE_MARKERS = {"cardladder": "Date Sold", "alt": "LT VALUE"}
 _MAX_SHOT_HEIGHT = 5000
 
 
-async def _screenshots() -> dict[str, str | None]:
-    out: dict[str, str | None] = {}
+async def _collect() -> tuple[dict, dict[str, str | None]]:
+    """Settle both pages, then parse structured data + capture screenshots."""
+    parsers = {"cardladder": parse.parse_cardladder, "alt": parse.parse_alt}
+    data: dict = {}
+    shots: dict[str, str | None] = {}
     for name in ("cardladder", "alt"):
         page = controller.windows.page(name)
+        marker = _SETTLE_MARKERS.get(name)
+        if marker:
+            try:
+                await page.get_by_text(marker, exact=False).first.wait_for(timeout=6000)
+            except Exception:  # noqa: BLE001 - fall back to a fixed settle below
+                pass
+        await page.wait_for_timeout(1200)  # let lazy sections (transactions) render
         try:
-            marker = _SETTLE_MARKERS.get(name)
-            if marker:
-                try:
-                    await page.get_by_text(marker, exact=False).first.wait_for(timeout=6000)
-                except Exception:  # noqa: BLE001 - fall back to a fixed settle
-                    pass
-            await page.wait_for_timeout(1500)  # let lazy sections (transactions) render
+            data[name] = await parsers[name](page)
+        except Exception as exc:  # noqa: BLE001
+            data[name] = {"error": str(exc)}
+        try:
             png = await page.screenshot(full_page=True)
-            out[name] = "data:image/png;base64," + base64.b64encode(_cap_height(png)).decode()
+            shots[name] = "data:image/png;base64," + base64.b64encode(_cap_height(png)).decode()
         except Exception:  # noqa: BLE001
-            out[name] = None
-    return out
+            shots[name] = None
+    return data, shots
 
 
 def _cap_height(png: bytes) -> bytes:
