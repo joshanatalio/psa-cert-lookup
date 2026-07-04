@@ -27,10 +27,14 @@ from cert_lookup import config
 config.TOOL_PROFILE = config.TOOL_DATA_ROOT / "chrome-profile-server"
 config.HIDE_WINDOWS = True  # headful (Cloudflare needs it) but off-screen so nothing clutters the Mac
 
-from cert_lookup import LookupController, parse  # noqa: E402 - after the profile override above
+from cert_lookup import (  # noqa: E402 - after the profile override above
+    LookupController,
+    cert_extraction,
+    parse,
+)
 from cert_lookup.config import clean_cert  # noqa: E402
 
-from fastapi import FastAPI, Query  # noqa: E402
+from fastapi import FastAPI, File, Query, UploadFile  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -59,14 +63,36 @@ async def lookup(cert: str = Query(...)):
     cleaned = clean_cert(cert)
     if not cleaned:
         return JSONResponse({"error": "No cert number in input."}, status_code=400)
+    try:
+        return await _run_lookup(cleaned)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/lookup_image")
+async def lookup_image(photo: UploadFile = File(...)):
+    """Phone photo of a slab -> OCR the cert (Vision) -> look it up."""
+    raw = await photo.read()
+    try:
+        certs = await asyncio.to_thread(cert_extraction.extract_certs, raw)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"OCR failed: {exc}"}, status_code=500)
+    if not certs:
+        return JSONResponse({"error": "No cert number found in the photo."}, status_code=422)
+    if len(certs) > 1:
+        return {"candidates": certs}  # ambiguous — let the phone confirm which one
+    try:
+        return await _run_lookup(certs[0])
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+async def _run_lookup(cert: str) -> dict:
     async with lock:
-        try:
-            result = await controller.run(cleaned)
-            data, shots = await _collect()
-        except Exception as exc:  # noqa: BLE001
-            return JSONResponse({"error": str(exc)}, status_code=500)
+        result = await controller.run(cert)
+        data, shots = await _collect()
     return {
-        "cert": cleaned,
+        "cert": cert,
         "label": result.label,
         "grade": result.grade,
         "status": result.status,

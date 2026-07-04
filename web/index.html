@@ -28,6 +28,8 @@
       border-radius: 10px; background: #0a84ff; color: #fff;
     }
     button:disabled { opacity: .5; }
+    #cam { background: #e5e5ea; }
+    @media (prefers-color-scheme: dark) { #cam { background: #2c2c2e; } }
     #status { min-height: 20px; margin: 10px 2px; font-size: 14px; color: #666; }
     #label { font-weight: 600; margin: 6px 2px 12px; }
     #summary { display: flex; gap: 8px; margin: 0 0 14px; }
@@ -48,8 +50,10 @@
     <h1>🔴 PSA Cert Lookup</h1>
     <form id="f">
       <input id="cert" inputmode="numeric" autocomplete="off" placeholder="Enter a PSA cert #" />
+      <button id="cam" type="button" title="Photo of slab">📷</button>
       <button id="go" type="submit">Look up</button>
     </form>
+    <input id="photo" type="file" accept="image/*" capture="environment" hidden />
     <div id="status"></div>
     <div id="label"></div>
     <div id="summary"></div>
@@ -87,39 +91,70 @@
       }
     }
 
-    f.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const cert = certEl.value.replace(/\D/g, '');
-      if (!cert) return;
-      go.disabled = true;
-      statusEl.textContent = 'Looking up ' + cert + '… (first lookup opens the browser, ~10s)';
-      labelEl.textContent = '';
-      summaryEl.innerHTML = '';
-      out.innerHTML = '';
+    const cam = document.getElementById('cam');
+    const photo = document.getElementById('photo');
+
+    function begin(msg) {
+      go.disabled = true; cam.disabled = true;
+      statusEl.textContent = msg;
+      labelEl.textContent = ''; summaryEl.innerHTML = ''; out.innerHTML = '';
+    }
+    function done() { go.disabled = false; cam.disabled = false; }
+
+    function showResult(data) {
+      labelEl.textContent = data.label || data.cert || '';
+      renderSummary(data.data);
+      const notes = Object.entries(data.status || {})
+        .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
+      statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : 'Done.';
+      for (const [name, uri] of Object.entries(data.screenshots || {})) {
+        if (!uri) continue;
+        const div = document.createElement('div');
+        div.className = 'shot';
+        div.innerHTML = '<h2>' + name + '</h2>';
+        const img = document.createElement('img');
+        img.src = uri;
+        div.appendChild(img);
+        out.appendChild(div);
+      }
+    }
+
+    async function handle(promise, waitingMsg) {
+      begin(waitingMsg);
       try {
-        const res = await fetch('/lookup?cert=' + encodeURIComponent(cert));
+        const res = await promise;
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        labelEl.textContent = data.label || cert;
-        renderSummary(data.data);
-        const notes = Object.entries(data.status || {})
-          .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
-        statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : 'Done.';
-        for (const [name, uri] of Object.entries(data.screenshots || {})) {
-          if (!uri) continue;
-          const div = document.createElement('div');
-          div.className = 'shot';
-          div.innerHTML = '<h2>' + name + '</h2>';
-          const img = document.createElement('img');
-          img.src = uri;
-          div.appendChild(img);
-          out.appendChild(div);
+        if (data.candidates) {  // ambiguous OCR — let the user confirm
+          certEl.value = data.candidates[0];
+          statusEl.textContent = 'Found: ' + data.candidates.join(', ') + '. Check the cert and tap Look up.';
+          return;
         }
+        showResult(data);
       } catch (err) {
         statusEl.textContent = '❌ ' + err.message;
       } finally {
-        go.disabled = false;
+        done();
       }
+    }
+
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const cert = certEl.value.replace(/\D/g, '');
+      if (!cert) return;
+      handle(fetch('/lookup?cert=' + encodeURIComponent(cert)),
+             'Looking up ' + cert + '… (first lookup opens the browser, ~10s)');
+    });
+
+    cam.addEventListener('click', () => photo.click());
+    photo.addEventListener('change', () => {
+      const file = photo.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append('photo', file);
+      handle(fetch('/lookup_image', { method: 'POST', body }),
+             'Reading the cert from your photo…');
+      photo.value = '';  // allow re-selecting the same file
     });
   </script>
 </body>

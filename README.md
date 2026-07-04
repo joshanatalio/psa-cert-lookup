@@ -80,20 +80,25 @@ Look up certs from your phone. The Mac does the automation (as always) and sends
 python3 -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
-Then, from a browser (Mac or phone), open `http://<host>:8000`, type a cert, and get the label +
-two screenshots (CardLadder sales/value, Alt value/populations). The first lookup opens the
-browser (~10-15s); later ones reuse it.
+Then, from a browser (Mac or phone), open `http://<host>:8000`. You can:
+- **Type a cert** and tap Look up, or
+- **📷 photograph a slab** — the phone uploads the label, the Mac OCRs the cert (Vision, same as the
+  menu-bar app) and looks it up.
 
-- **From your phone:** install **Tailscale** (free) on the Mac and phone, then open
-  `http://<mac-name>:8000` on the phone (its Tailscale MagicDNS name). No port-forwarding, no App
-  Store. "Add to Home Screen" in Safari for an app-like icon.
-- The server uses its **own** profile copy (`~/.cert-dual-lookup/chrome-profile-server`), so it runs
-  fine alongside the menu-bar app (Chromium locks a user-data-dir). Both are copies of your one
-  logged-in Chrome.
-- Requests are serialized (one browser drives both sites). Screenshots are capped in height so the
-  phone isn't scrolling a huge image; the key data is near the top.
-- Roadmap: Phase 2 adds parsed JSON (prices/sales as structured data — verified feasible), Phase 3
-  adds photographing a slab on the phone (reuses the Vision OCR in `cert_extraction.py`).
+Each result shows an **at-a-glance summary** (CardLadder last sale + recent average, Alt value +
+range) plus **screenshots** of both result pages for detail. The first lookup opens the browser
+(~10-15s); later ones reuse it.
+
+- **From your phone on the same Wi-Fi:** open `http://<mac-LAN-ip>:8000` (find it with
+  `ipconfig getifaddr en0`). **Away from home:** install **Tailscale** (free) on the Mac and phone
+  and use `http://<mac-name>:8000`. No App Store. "Add to Home Screen" in Safari for an app icon.
+  (If the phone can't connect, allow incoming connections for Python in macOS Firewall settings.)
+- The server runs **headful but off-screen** (`config.HIDE_WINDOWS`) — headless trips CardLadder's
+  Cloudflare, and a minimized window stops rendering, so the two windows are positioned off-screen
+  where they still render for screenshots but don't clutter the Mac.
+- It uses its **own** profile copy (`~/.cert-dual-lookup/chrome-profile-server`), so it runs fine
+  alongside the menu-bar app (Chromium locks a user-data-dir). Requests are serialized (one browser
+  drives both sites).
 
 ## Architecture
 
