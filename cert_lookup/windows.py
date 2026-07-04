@@ -121,11 +121,15 @@ class WindowManager:
         raise last_error
 
     async def _create_context(self) -> BrowserContext:
+        # Headless (phone server): use a fixed viewport for screenshots. Headful (Mac apps): let
+        # the real OS window drive size and position it via CDP.
+        viewport_kwargs = (
+            {"viewport": config.HEADLESS_VIEWPORT} if config.HEADLESS else {"no_viewport": True}
+        )
         return await self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(config.TOOL_PROFILE),
-            headless=False,
+            headless=config.HEADLESS,
             channel=config.BROWSER_CHANNEL,
-            no_viewport=True,  # let the real OS window drive size; we position it via CDP
             # Strip signals that mark this as automated (Cloudflare/Google block them) AND drop
             # --use-mock-keychain so the copied, encrypted cookies can actually be decrypted.
             ignore_default_args=["--enable-automation", "--use-mock-keychain"],
@@ -134,6 +138,7 @@ class WindowManager:
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
             ],
+            **viewport_kwargs,
         )
 
     async def _open_new_window(self, existing: Page) -> Page:
@@ -143,6 +148,11 @@ class WindowManager:
         return await new_page_info.value
 
     async def _position_all(self) -> None:
+        if config.HEADLESS:
+            return  # no OS windows to position in headless
+        if config.HIDE_WINDOWS:
+            await self._hide_windows()
+            return
         any_page = next(iter(self.windows.values())).page
         metrics = await any_page.evaluate(
             "() => ({ w: window.screen.availWidth, h: window.screen.availHeight,"
@@ -173,6 +183,25 @@ class WindowManager:
             },
         )
 
+    async def _hide_windows(self) -> None:
+        """Hide both windows off-screen (phone server) so they don't clutter the Mac. We position
+        them off the visible area rather than minimizing — a minimized window stops rendering and
+        screenshots come back blank, whereas an off-screen "normal" window still renders."""
+        for win in self.windows.values():
+            try:
+                cdp = await self._context.new_cdp_session(win.page)
+                target = await cdp.send("Browser.getWindowForTarget")
+                await cdp.send(
+                    "Browser.setWindowBounds",
+                    {
+                        "windowId": target["windowId"],
+                        "bounds": {"windowState": "normal", "left": -4000, "top": 0,
+                                   "width": 1280, "height": 1600},
+                    },
+                )
+            except Exception:
+                pass
+
     def page(self, name: str) -> Page:
         return self.windows[name].page
 
@@ -187,6 +216,8 @@ class WindowManager:
 
     async def bring_to_front(self) -> None:
         """Raise both browser windows above other apps (best-effort)."""
+        if config.HIDE_WINDOWS:
+            return  # keep them minimized (phone server); don't pop them up on lookups
         for win in self.windows.values():
             try:
                 await win.page.bring_to_front()

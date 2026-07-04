@@ -25,6 +25,7 @@ from PIL import Image
 from cert_lookup import config
 
 config.TOOL_PROFILE = config.TOOL_DATA_ROOT / "chrome-profile-server"
+config.HIDE_WINDOWS = True  # headful (Cloudflare needs it) but off-screen so nothing clutters the Mac
 
 from cert_lookup import LookupController, parse  # noqa: E402 - after the profile override above
 from cert_lookup.config import clean_cert  # noqa: E402

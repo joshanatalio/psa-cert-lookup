@@ -74,6 +74,16 @@ ALT_SLOT = WindowSlot(name="alt", left_fraction=0.5, width_fraction=0.5)
 # bundled Chromium.
 BROWSER_CHANNEL: str | None = "chrome"
 
+# Headless doesn't work here — CardLadder's Cloudflare hard-blocks headless Chrome. Kept as a
+# flag but the phone server uses MINIMIZE_WINDOWS instead (headful, but windows minimized so they
+# don't clutter the Mac; Playwright screenshots render from the page, not the OS window, so they
+# still work minimized).
+HEADLESS = False
+HEADLESS_VIEWPORT = {"width": 1280, "height": 1600}
+# Hide the windows off-screen (phone server) so they don't clutter the Mac, while still
+# rendering for screenshots. (Minimizing would stop rendering; headless trips Cloudflare.)
+HIDE_WINDOWS = False
+
 # Max time (ms) to wait for a page element/state before treating an action as failed.
 DEFAULT_TIMEOUT_MS = 15_000
 
