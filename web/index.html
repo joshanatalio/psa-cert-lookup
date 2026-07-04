@@ -40,6 +40,17 @@
     .card .name { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #888; }
     .card .val { font-size: 24px; font-weight: 700; margin: 2px 0; }
     .card .sub { font-size: 12px; color: #888; }
+    .sales { margin: 0 0 18px; }
+    .sec-title { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 0 2px 8px; }
+    .sale {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+      background: #fff; border: 1px solid #0001; border-radius: 10px; padding: 9px 12px; margin-bottom: 6px;
+    }
+    @media (prefers-color-scheme: dark) { .sale { background: #1c1c1e; border-color: #333; } }
+    .sale .price { font-weight: 700; font-size: 16px; white-space: nowrap; }
+    .sale .meta { font-size: 12px; color: #8a8a8e; }
+    .sale .desc { font-size: 11px; color: #a5a5aa; margin-top: 2px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
     .shot { margin-bottom: 16px; }
     .shot h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin: 0 2px 6px; }
     .shot img { width: 100%; border-radius: 12px; border: 1px solid #0002; display: block; }
@@ -50,10 +61,12 @@
     <h1>🔴 PSA Cert Lookup</h1>
     <form id="f">
       <input id="cert" inputmode="numeric" autocomplete="off" placeholder="Enter a PSA cert #" />
-      <button id="cam" type="button" title="Photo of slab">📷</button>
+      <button id="cam" type="button" title="Take a photo">📷</button>
+      <button id="lib" type="button" title="Choose from library">🖼️</button>
       <button id="go" type="submit">Look up</button>
     </form>
     <input id="photo" type="file" accept="image/*" capture="environment" hidden />
+    <input id="libphoto" type="file" accept="image/*" hidden />
     <div id="status"></div>
     <div id="label"></div>
     <div id="summary"></div>
@@ -101,12 +114,31 @@
     }
     function done() { go.disabled = false; cam.disabled = false; }
 
+    function renderSales(sales) {
+      if (!sales || !sales.length) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'sales';
+      wrap.innerHTML = '<div class="sec-title">CardLadder sales (' + sales.length + ')</div>';
+      for (const s of sales) {
+        const meta = [s.date, s.type, s.platform].filter(Boolean).join(' · ');
+        const row = document.createElement('div');
+        row.className = 'sale';
+        row.innerHTML =
+          '<div><div class="meta">' + meta + '</div>' +
+          (s.title ? '<div class="desc">' + s.title + '</div>' : '') + '</div>' +
+          '<div class="price">' + money(s.price) + '</div>';
+        wrap.appendChild(row);
+      }
+      out.appendChild(wrap);
+    }
+
     function showResult(data) {
       labelEl.textContent = data.label || data.cert || '';
       renderSummary(data.data);
       const notes = Object.entries(data.status || {})
         .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
       statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : 'Done.';
+      renderSales(((data.data || {}).cardladder || {}).sales);
       for (const [name, uri] of Object.entries(data.screenshots || {})) {
         if (!uri) continue;
         const div = document.createElement('div');
@@ -146,16 +178,23 @@
              'Looking up ' + cert + '… (first lookup opens the browser, ~10s)');
     });
 
-    cam.addEventListener('click', () => photo.click());
-    photo.addEventListener('change', () => {
-      const file = photo.files[0];
+    const lib = document.getElementById('lib');
+    const libphoto = document.getElementById('libphoto');
+
+    function uploadPhoto(input) {
+      const file = input.files[0];
       if (!file) return;
       const body = new FormData();
       body.append('photo', file);
       handle(fetch('/lookup_image', { method: 'POST', body }),
              'Reading the cert from your photo…');
-      photo.value = '';  // allow re-selecting the same file
-    });
+      input.value = '';  // allow re-selecting the same file
+    }
+
+    cam.addEventListener('click', () => photo.click());
+    lib.addEventListener('click', () => libphoto.click());
+    photo.addEventListener('change', () => uploadPhoto(photo));
+    libphoto.addEventListener('change', () => uploadPhoto(libphoto));
   </script>
 </body>
 </html>

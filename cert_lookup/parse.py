@@ -20,7 +20,7 @@ _CL_ROW = re.compile(
 
 _CL_JS = r"""() => {
   const rows = [...document.querySelectorAll('a.list-item.clickable')]
-    .slice(0, 12).map(r => (r.innerText || '').replace(/\s+/g, ' ').trim());
+    .slice(0, 25).map(r => (r.innerText || '').replace(/\s+/g, ' ').trim());
   return { rows };
 }"""
 
@@ -52,16 +52,24 @@ async def parse_cardladder(page) -> dict:
     sales = []
     for line in raw.get("rows", []):
         m = _CL_ROW.search(line)
-        if m:
-            sales.append(
-                {
-                    "title": m.group("title").strip(),
-                    "date": m.group("date").strip(),
-                    "type": m.group("type").strip(),
-                    "price": _money(m.group("price")),
-                }
-            )
-    sales = sales[:8]
+        if not m:
+            continue
+        title = m.group("title").strip()
+        # Rows read "PLATFORM - <seller/card...>"; split the leading marketplace off.
+        platform = None
+        if " - " in title:
+            head, rest = title.split(" - ", 1)
+            if len(head) <= 20:
+                platform, title = head.strip(), rest.strip()
+        sales.append(
+            {
+                "platform": platform,
+                "title": title,
+                "date": m.group("date").strip(),
+                "type": m.group("type").strip(),
+                "price": _money(m.group("price")),
+            }
+        )
     prices = [s["price"] for s in sales if s["price"] is not None]
     recent_avg = round(sum(prices) / len(prices)) if prices else None
     last = sales[0] if sales else None
@@ -69,7 +77,7 @@ async def parse_cardladder(page) -> dict:
         "last_sale": last["price"] if last else None,
         "last_date": last["date"] if last else None,
         "recent_avg": recent_avg,
-        "sales": sales,
+        "sales": sales,  # all rendered sales, full info
     }
 
 
