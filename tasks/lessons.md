@@ -89,6 +89,31 @@
   by `page.evaluate()`; a **minimized** window does not render and reads as empty. Off-screen, not
   minimized, is the trick for "hidden but functional."
 
+## L13 — FastAPI route signatures need real Python 3.9-compatible types, even with `from __future__ import annotations`
+- **Failure mode:** `async def lookup(cert: str, grade: str | None = Query(None))` compiled fine
+  (`py_compile` doesn't catch it) but crashed at request time: `TypeError: Unable to evaluate type
+  annotation 'str | None'`. FastAPI/pydantic calls `get_type_hints()` on route handlers to build
+  request validation, which actually `eval()`s the string — and PEP 604 `X | Y` isn't valid at
+  runtime before Python 3.10, regardless of the `__future__` import deferring *when* it's evaluated.
+- **Prevention rule:** in FastAPI (or any framework that runtime-introspects annotations) route
+  signatures on Python <3.10, use `typing.Optional[str]`/`Union`, not `str | None` — even though
+  `X | None` is fine everywhere else in the same file for plain functions nothing ever `eval()`s.
+  Also: **actually start the server** after a route change, don't just `py_compile` — this class of
+  bug only surfaces at runtime.
+
+## L14 — A "settle" wait must check for real data, not a label that exists before data loads
+- **Failure mode:** waited for the text "Date Sold" to appear before parsing CardLadder's sales —
+  but "Date Sold" is *also* the static column-header label, rendered immediately as part of the
+  page's skeleton, before any actual sale row loads. This gave a false-positive "ready" signal.
+  It "worked" on the normal search path only by accident (other incidental waits elsewhere padded
+  enough real time), and broke on a faster path (grade-switch) that had no such padding, returning
+  zero sales.
+- **Prevention rule:** wait for the presence of an actual **data element** (a real row/link — e.g.
+  `document.querySelectorAll('a.list-item.clickable').length > 0`, or an anchor to the external
+  source like `a[href*="ebay.com/itm"]`), never a label/heading string, which can exist in a
+  page's static template before any data has loaded. Put this wait *inside* the parser itself so
+  it can't be skipped by a caller that takes a different, faster path.
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the

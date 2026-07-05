@@ -31,7 +31,13 @@
     #cam { background: #e5e5ea; }
     @media (prefers-color-scheme: dark) { #cam { background: #2c2c2e; } }
     #status { min-height: 20px; margin: 10px 2px; font-size: 14px; color: #666; }
-    #label { font-weight: 600; margin: 6px 2px 12px; }
+    #labelRow { display: flex; align-items: center; gap: 8px; margin: 6px 2px 12px; }
+    #label { font-weight: 600; flex: 1; min-width: 0; }
+    #grade {
+      font-size: 14px; font-weight: 600; padding: 6px 8px; border-radius: 8px;
+      border: 1px solid #ccc; background: #fff; color: #111;
+    }
+    @media (prefers-color-scheme: dark) { #grade { background: #1c1c1e; color: #eee; border-color: #333; } }
     #summary { display: flex; gap: 8px; margin: 0 0 14px; }
     .card {
       flex: 1; background: #fff; border-radius: 12px; padding: 12px 14px; border: 1px solid #0001;
@@ -76,7 +82,10 @@
     <!-- No `capture` attribute: iOS shows its native "Take Photo / Photo Library" chooser. -->
     <input id="photo" type="file" accept="image/*" hidden />
     <div id="status"></div>
-    <div id="label"></div>
+    <div id="labelRow" hidden>
+      <div id="label"></div>
+      <select id="grade" title="Compare a different PSA grade of this same card"></select>
+    </div>
     <div id="summary"></div>
     <div id="tabs" hidden>
       <div class="tab active" data-tab="cardladder">CardLadder</div>
@@ -90,9 +99,13 @@
     const certEl = document.getElementById('cert');
     const go = document.getElementById('go');
     const statusEl = document.getElementById('status');
+    const labelRowEl = document.getElementById('labelRow');
     const labelEl = document.getElementById('label');
+    const gradeEl = document.getElementById('grade');
     const summaryEl = document.getElementById('summary');
     const out = document.getElementById('out');
+    const PSA_GRADES = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+    let lastCert = null;
 
     const money = (n) => (n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 }));
 
@@ -124,13 +137,13 @@
     let activeTab = 'cardladder';
 
     function begin(msg) {
-      go.disabled = true; cam.disabled = true;
+      go.disabled = true; cam.disabled = true; gradeEl.disabled = true;
       statusEl.textContent = msg;
       labelEl.textContent = ''; summaryEl.innerHTML = ''; out.innerHTML = '';
-      tabsEl.hidden = true;
+      labelRowEl.hidden = true; tabsEl.hidden = true;
       lastData = null;
     }
-    function done() { go.disabled = false; cam.disabled = false; }
+    function done() { go.disabled = false; cam.disabled = false; gradeEl.disabled = false; }
 
     function row(meta, desc, price, url) {
       // A real <a target="_blank"> — tapping opens the marketplace listing (eBay, etc.) in the
@@ -159,20 +172,20 @@
     function renderAlt(alt) {
       const listings = alt.listings || [], sales = alt.sales || [];
       out.innerHTML = '';
+      if (sales.length) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = '<div class="sec-title">Recent sales (' + sales.length + ')</div>';
+        for (const s of sales) wrap.appendChild(row([s.date, s.type].filter(Boolean).join(' · '), null, s.price, s.url));
+        out.appendChild(wrap);
+      }
       if (listings.length) {
         const wrap = document.createElement('div');
-        wrap.innerHTML = '<div class="sec-title">Live listings (' + listings.length + ')</div>';
+        wrap.innerHTML = '<div class="sub-title">Live listings (' + listings.length + ')</div>';
         for (const l of listings) {
           const meta = [l.type, l.bids != null ? l.bids + ' bids' : null, l.time_left, l.source]
             .filter(Boolean).join(' · ');
           wrap.appendChild(row(meta, null, l.price, l.url));
         }
-        out.appendChild(wrap);
-      }
-      if (sales.length) {
-        const wrap = document.createElement('div');
-        wrap.innerHTML = '<div class="sub-title">Recent sales (' + sales.length + ')</div>';
-        for (const s of sales) wrap.appendChild(row([s.date, s.type].filter(Boolean).join(' · '), null, s.price, s.url));
         out.appendChild(wrap);
       }
       if (!listings.length && !sales.length) out.innerHTML = '<div class="sec-title">No listings or sales found</div>';
@@ -193,8 +206,23 @@
       });
     }
 
+    function renderGradePicker(data) {
+      lastCert = data.cert;
+      const current = data.grade != null ? String(parseInt(data.grade, 10)) : null;
+      gradeEl.innerHTML = '';
+      for (const g of PSA_GRADES) {
+        const opt = document.createElement('option');
+        opt.value = String(g);
+        opt.textContent = 'PSA ' + g;
+        if (String(g) === current) opt.selected = true;
+        gradeEl.appendChild(opt);
+      }
+      labelRowEl.hidden = false;
+    }
+
     function showResult(data) {
       labelEl.textContent = data.label || data.cert || '';
+      renderGradePicker(data);
       renderSummary(data.data);
       const notes = Object.entries(data.status || {})
         .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
@@ -203,6 +231,13 @@
       tabsEl.hidden = false;
       renderTab();
     }
+
+    gradeEl.addEventListener('change', () => {
+      if (!lastCert) return;
+      const grade = gradeEl.value;
+      handle(() => fetch('/lookup?cert=' + encodeURIComponent(lastCert) + '&grade=' + encodeURIComponent(grade)),
+             'Switching to PSA ' + grade + '…');
+    });
 
     async function handle(makeRequest, waitingMsg) {
       begin(waitingMsg);

@@ -82,6 +82,14 @@ def _money(text: str | None) -> float | None:
 
 
 async def parse_cardladder(page) -> dict:
+    # Wait for an actual sale ROW (not just "Date Sold", which is also a static column-header
+    # label present before any row loads — waiting on that text alone is a false-positive "ready"
+    # signal, especially right after a grade switch's full page reload with no other incidental
+    # wait to mask it).
+    for _ in range(30):
+        if await page.evaluate("() => document.querySelectorAll('a.list-item.clickable').length > 0"):
+            break
+        await page.wait_for_timeout(200)
     raw = await page.evaluate(_CL_JS)
     sales = []
     for row in raw.get("rows", []):
@@ -117,10 +125,15 @@ async def parse_cardladder(page) -> dict:
 
 
 async def parse_alt(page) -> dict:
-    # Nudge lazy sections (listings, recent transactions) to render before reading.
-    for _ in range(4):
-        await page.mouse.wheel(0, 1400)
-        await page.wait_for_timeout(450)
+    # Listings/recent-transactions render on an intersection observer, so scroll once to bring
+    # them into view, then poll briefly for an actual eBay link to show up instead of blindly
+    # waiting a fixed duration regardless of how fast the page actually loads (was costing ~1.8s
+    # on every lookup; this exits as soon as data's ready, same worst-case cap otherwise).
+    await page.mouse.wheel(0, 2400)
+    for _ in range(12):
+        if await page.evaluate("() => !!document.querySelector('a[href*=\"ebay.com/itm\"]')"):
+            break
+        await page.wait_for_timeout(200)
     await page.evaluate("() => window.scrollTo(0, 0)")
     raw = await page.evaluate(_ALT_JS)
 

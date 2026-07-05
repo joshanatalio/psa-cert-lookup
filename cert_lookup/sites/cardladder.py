@@ -90,6 +90,20 @@ class CardLadderDriver:
         await input_locator.press("Enter")
         return await self._read_grade(cert, pre_nav_url)
 
+    async def switch_grade(self, cert: str, grade: str) -> CardLadderResult:
+        """Re-render the currently-open profile at a different PSA grade.
+
+        Verified live: swapping just the `grade:gN` segment while keeping the same `profileId`
+        shows the SAME card's data at the new grade (confirmed matching title, different
+        sales/pricing) — no need to re-run the cert search overlay.
+        """
+        url = self.page.url or ""
+        new_url = re.sub(r"(grade(?:%3A|:)g)[\d.]+", rf"\g<1>{grade}", url)
+        if new_url != url:
+            await self.page.goto(new_url, wait_until="domcontentloaded")
+            await self.page.wait_for_timeout(300)  # brief settle for the SPA to re-render rows
+        return CardLadderResult(cert=cert, grade=grade, url=self.page.url)
+
     async def _read_grade(self, cert: str, pre_nav_url: str) -> CardLadderResult:
         """Fast path: wait for the URL to change to a NEWLY resolved filter URL and read the
         grade from it.

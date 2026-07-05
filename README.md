@@ -99,9 +99,16 @@ Then, from a browser (Mac or phone), open `http://<host>:8000`. You can:
   browser.
 
 Each result shows an **at-a-glance summary** (CardLadder last sale + recent average, Alt value +
-range), then **tabs** between CardLadder (all rendered sales — price, date, type, platform, title)
-and Alt (live listings — price, bids, time left, source — plus recent sales). The first lookup
-opens the browser (~10-15s); later ones reuse it.
+range), a **PSA grade dropdown** next to the card name, then **tabs** between CardLadder (all
+rendered sales — price, date, type, platform, title) and Alt (recent sales, then live listings —
+price, bids, time left, source). The first lookup opens the browser (~10-15s); later ones reuse
+it and typically finish in 2-4s.
+
+**Comparing grades:** the dropdown defaults to the slab's actual grade; picking a different one
+(e.g. PSA 10) re-renders both sites' data for that grade **of the same card** — CardLadder by
+swapping the grade in its already-resolved URL (same `profileId`, verified to show the same card),
+Alt via its native per-item grade switch. This reuses the currently-open pages (no re-typing the
+cert), so it's fast (~1-2s) — falls back to a full re-search if you switch to a different cert.
 
 - **From your phone on the same Wi-Fi:** open `http://<mac-LAN-ip>:8000` (find it with
   `ipconfig getifaddr en0`). "Add to Home Screen" in Safari for an app icon.

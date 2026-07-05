@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 # The server gets its OWN profile copy so it can run alongside the menu-bar app (Chromium locks a
 # user-data-dir). Both are copies of your one logged-in Chrome. Must be set before the controller
@@ -56,12 +57,12 @@ async def index() -> str:
 
 
 @app.get("/lookup")
-async def lookup(cert: str = Query(...)):
+async def lookup(cert: str = Query(...), grade: Optional[str] = Query(None)):
     cleaned = clean_cert(cert)
     if not cleaned:
         return JSONResponse({"error": "No cert number in input."}, status_code=400)
     try:
-        return await _run_lookup(cleaned)
+        return await _run_lookup(cleaned, grade)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": str(exc)}, status_code=500)
 
@@ -84,9 +85,9 @@ async def lookup_image(photo: UploadFile = File(...)):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-async def _run_lookup(cert: str) -> dict:
+async def _run_lookup(cert: str, grade: str | None = None) -> dict:
     async with lock:
-        result = await controller.run(cert)
+        result = await controller.run(cert, grade)
         data = await _parse_all()
     return {
         "cert": cert,
@@ -97,27 +98,24 @@ async def _run_lookup(cert: str) -> dict:
     }
 
 
-# Wait for a per-site marker so the page has rendered before parsing.
-_SETTLE_MARKERS = {"cardladder": "Date Sold", "alt": "LT VALUE"}
+async def _parse_one(name: str, parser) -> tuple[str, dict]:
+    # Each parser waits for its own precise data-presence signal internally (an actual sale row /
+    # eBay link, not a text label) — a generic label-text wait here previously gave false
+    # positives, since e.g. "Date Sold" is also a static column header shown before any row loads.
+    page = controller.windows.page(name)
+    try:
+        return name, await parser(page)
+    except Exception as exc:  # noqa: BLE001
+        return name, {"error": str(exc)}
 
 
 async def _parse_all() -> dict:
-    """Settle both pages, then parse structured data from each."""
-    parsers = {"cardladder": parse.parse_cardladder, "alt": parse.parse_alt}
-    data: dict = {}
-    for name in ("cardladder", "alt"):
-        page = controller.windows.page(name)
-        marker = _SETTLE_MARKERS.get(name)
-        if marker:
-            try:
-                await page.get_by_text(marker, exact=False).first.wait_for(timeout=6000)
-            except Exception:  # noqa: BLE001
-                pass
-        try:
-            data[name] = await parsers[name](page)
-        except Exception as exc:  # noqa: BLE001
-            data[name] = {"error": str(exc)}
-    return data
+    """Settle + parse both pages concurrently (they're independent browser tabs)."""
+    results = await asyncio.gather(
+        _parse_one("cardladder", parse.parse_cardladder),
+        _parse_one("alt", parse.parse_alt),
+    )
+    return dict(results)
 
 
 if __name__ == "__main__":
