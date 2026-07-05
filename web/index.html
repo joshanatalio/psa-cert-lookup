@@ -49,7 +49,10 @@
     #historyBox summary::-webkit-details-marker { display: none; }
     #historyBox summary::before { content: '▸ '; }
     #historyBox[open] summary::before { content: '▾ '; }
-    #historyList { margin-top: 8px; }
+    #historyList {
+      margin-top: 8px; max-height: 45vh; overflow-y: auto; overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
     .hist-item {
       display: block; width: 100%; text-align: left; font: inherit; padding: 9px 12px;
       background: #fff; border: 1px solid #0001; border-radius: 10px; margin-bottom: 6px; color: inherit;
