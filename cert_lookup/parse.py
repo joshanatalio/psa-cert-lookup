@@ -20,29 +20,39 @@ _CL_ROW = re.compile(
 
 _CL_JS = r"""() => {
   const rows = [...document.querySelectorAll('a.list-item.clickable')]
-    .slice(0, 25).map(r => (r.innerText || '').replace(/\s+/g, ' ').trim());
+    .slice(0, 25).map(a => ({
+      text: (a.innerText || '').replace(/\s+/g, ' ').trim(),
+      href: a.getAttribute('href') || null,
+    }));
   return { rows };
 }"""
 
+# Alt's listings/sales are real <a href="https://www.ebay.com/itm/...">, so scan anchors directly
+# (simpler and more precise than the earlier any-element text scan).
 _ALT_JS = r"""() => {
   let value = null, range = null;
   const listings = [], txns = [];
   for (const e of document.querySelectorAll('*')) {
     if (e.children.length > 4) continue;
     const t = (e.innerText || '').replace(/\s+/g, ' ').trim();
-    if (!t) continue;
-    if (!value && /VALUE\s*\$[\d,]/i.test(t) && t.length < 70) {
+    if (!value && t && /VALUE\s*\$[\d,]/i.test(t) && t.length < 70) {
       const m = t.match(/\$[\d,]+(?:\.\d+)?/g) || [];
       if (m.length) value = m[0];
       if (m.length >= 3) range = m[1] + ' – ' + m[2];
     }
-    if (t.length < 90 && /(fixed price|auction)/i.test(t) && /listing in/i.test(t) && /\$[\d,]/.test(t))
-      listings.push(t);
-    if (t.length < 50 && /^(fixed price|auction)\s+[A-Z][a-z]{2}\s+\d/i.test(t) && /\$[\d,]/.test(t))
-      txns.push(t);
   }
-  const uniq = a => [...new Set(a)];
-  return { value, range, listings: uniq(listings).slice(0, 15), txns: uniq(txns).slice(0, 15) };
+  const seen = new Set();
+  for (const a of document.querySelectorAll('a[href]')) {
+    const t = (a.innerText || '').replace(/\s+/g, ' ').trim();
+    const href = a.getAttribute('href');
+    if (!t || !href || t.length > 90 || seen.has(t)) continue;
+    if (/(fixed price|auction)/i.test(t) && /\$[\d,]/.test(t)) {
+      seen.add(t);
+      if (/listing in/i.test(t)) listings.push({ text: t, href });
+      else if (/^(fixed price|auction)\s+[A-Z][a-z]{2}\s+\d/i.test(t)) txns.push({ text: t, href });
+    }
+  }
+  return { value, range, listings: listings.slice(0, 15), txns: txns.slice(0, 15) };
 }"""
 
 # "Auction 3 bids |3d 23h $510 live listing in eBay" / "Fixed price $2,082 live listing in eBay"
@@ -68,8 +78,8 @@ def _money(text: str | None) -> float | None:
 async def parse_cardladder(page) -> dict:
     raw = await page.evaluate(_CL_JS)
     sales = []
-    for line in raw.get("rows", []):
-        m = _CL_ROW.search(line)
+    for row in raw.get("rows", []):
+        m = _CL_ROW.search(row["text"])
         if not m:
             continue
         title = m.group("title").strip()
@@ -86,6 +96,7 @@ async def parse_cardladder(page) -> dict:
                 "date": m.group("date").strip(),
                 "type": m.group("type").strip(),
                 "price": _money(m.group("price")),
+                "url": row.get("href"),  # opens the original marketplace listing (eBay, etc.)
             }
         )
     prices = [s["price"] for s in sales if s["price"] is not None]
@@ -108,8 +119,8 @@ async def parse_alt(page) -> dict:
     raw = await page.evaluate(_ALT_JS)
 
     listings = []
-    for line in raw.get("listings", []):
-        m = _ALT_LISTING.search(line)
+    for item in raw.get("listings", []):
+        m = _ALT_LISTING.search(item["text"])
         if m:
             listings.append(
                 {
@@ -118,17 +129,19 @@ async def parse_alt(page) -> dict:
                     "time_left": (m.group("time") or "").strip() or None,
                     "price": _money(m.group("price")),
                     "source": m.group("source"),
+                    "url": item.get("href"),
                 }
             )
     sales = []
-    for line in raw.get("txns", []):
-        m = _ALT_TXN.search(line)
+    for item in raw.get("txns", []):
+        m = _ALT_TXN.search(item["text"])
         if m:
             sales.append(
                 {
                     "type": m.group("type").strip().title(),
                     "date": m.group("date").strip(),
                     "price": _money(m.group("price")),
+                    "url": item.get("href"),
                 }
             )
     return {

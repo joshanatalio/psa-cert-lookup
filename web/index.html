@@ -45,7 +45,11 @@
     .sale {
       display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
       background: #fff; border: 1px solid #0001; border-radius: 10px; padding: 9px 12px; margin-bottom: 6px;
+      text-decoration: none; color: inherit;
     }
+    a.sale { cursor: pointer; }
+    a.sale:active { opacity: .7; }
+    a.sale .price { color: #0a84ff; }
     @media (prefers-color-scheme: dark) { .sale { background: #1c1c1e; border-color: #333; } }
     .sale .price { font-weight: 700; font-size: 16px; white-space: nowrap; }
     .sale .meta { font-size: 12px; color: #8a8a8e; }
@@ -66,12 +70,11 @@
     <h1>🔴 PSA Cert Lookup</h1>
     <form id="f">
       <input id="cert" inputmode="numeric" autocomplete="off" placeholder="Enter a PSA cert #" />
-      <button id="cam" type="button" title="Take a photo">📷</button>
-      <button id="lib" type="button" title="Choose from library">🖼️</button>
+      <button id="cam" type="button" title="Take or choose a photo">📷</button>
       <button id="go" type="submit">Look up</button>
     </form>
-    <input id="photo" type="file" accept="image/*" capture="environment" hidden />
-    <input id="libphoto" type="file" accept="image/*" hidden />
+    <!-- No `capture` attribute: iOS shows its native "Take Photo / Photo Library" chooser. -->
+    <input id="photo" type="file" accept="image/*" hidden />
     <div id="status"></div>
     <div id="label"></div>
     <div id="summary"></div>
@@ -129,9 +132,12 @@
     }
     function done() { go.disabled = false; cam.disabled = false; }
 
-    function row(meta, desc, price) {
-      const el = document.createElement('div');
+    function row(meta, desc, price, url) {
+      // A real <a target="_blank"> — tapping opens the marketplace listing (eBay, etc.) in the
+      // phone's actual browser, not inside this page (matters when installed as a home-screen app).
+      const el = document.createElement(url ? 'a' : 'div');
       el.className = 'sale';
+      if (url) { el.href = url; el.target = '_blank'; el.rel = 'noopener'; }
       el.innerHTML =
         '<div><div class="meta">' + meta + '</div>' +
         (desc ? '<div class="desc">' + desc + '</div>' : '') + '</div>' +
@@ -145,7 +151,7 @@
       const wrap = document.createElement('div');
       wrap.innerHTML = '<div class="sec-title">Sales (' + sales.length + ')</div>';
       for (const s of sales) {
-        wrap.appendChild(row([s.date, s.type, s.platform].filter(Boolean).join(' · '), s.title, s.price));
+        wrap.appendChild(row([s.date, s.type, s.platform].filter(Boolean).join(' · '), s.title, s.price, s.url));
       }
       out.innerHTML = ''; out.appendChild(wrap);
     }
@@ -159,14 +165,14 @@
         for (const l of listings) {
           const meta = [l.type, l.bids != null ? l.bids + ' bids' : null, l.time_left, l.source]
             .filter(Boolean).join(' · ');
-          wrap.appendChild(row(meta, null, l.price));
+          wrap.appendChild(row(meta, null, l.price, l.url));
         }
         out.appendChild(wrap);
       }
       if (sales.length) {
         const wrap = document.createElement('div');
         wrap.innerHTML = '<div class="sub-title">Recent sales (' + sales.length + ')</div>';
-        for (const s of sales) wrap.appendChild(row([s.date, s.type].filter(Boolean).join(' · '), null, s.price));
+        for (const s of sales) wrap.appendChild(row([s.date, s.type].filter(Boolean).join(' · '), null, s.price, s.url));
         out.appendChild(wrap);
       }
       if (!listings.length && !sales.length) out.innerHTML = '<div class="sec-title">No listings or sales found</div>';
@@ -198,10 +204,10 @@
       renderTab();
     }
 
-    async function handle(promise, waitingMsg) {
+    async function handle(makeRequest, waitingMsg) {
       begin(waitingMsg);
       try {
-        const res = await promise;
+        const res = await makeRequest();
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         if (data.candidates) {  // ambiguous OCR — let the user confirm
@@ -221,27 +227,46 @@
       e.preventDefault();
       const cert = certEl.value.replace(/\D/g, '');
       if (!cert) return;
-      handle(fetch('/lookup?cert=' + encodeURIComponent(cert)),
+      handle(() => fetch('/lookup?cert=' + encodeURIComponent(cert)),
              'Looking up ' + cert + '… (first lookup opens the browser, ~10s)');
     });
 
-    const lib = document.getElementById('lib');
-    const libphoto = document.getElementById('libphoto');
+    // Cert labels are small text on a slab — this resolution is plenty for OCR, and keeping the
+    // upload small makes it fast on cellular. Downscale/compress client-side before sending,
+    // whether the photo came from the camera or the library.
+    const MAX_DIM = 1600, JPEG_QUALITY = 0.85;
 
-    function uploadPhoto(input) {
-      const file = input.files[0];
-      if (!file) return;
-      const body = new FormData();
-      body.append('photo', file);
-      handle(fetch('/lookup_image', { method: 'POST', body }),
-             'Reading the cert from your photo…');
-      input.value = '';  // allow re-selecting the same file
+    function shrinkImage(file) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let { width, height } = img;
+          const scale = Math.min(1, MAX_DIM / Math.max(width, height));
+          width = Math.round(width * scale); height = Math.round(height * scale);
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', JPEG_QUALITY);
+        };
+        img.onerror = () => resolve(file);  // fall back to the original on any decode issue
+        img.src = url;
+      });
     }
 
     cam.addEventListener('click', () => photo.click());
-    lib.addEventListener('click', () => libphoto.click());
-    photo.addEventListener('change', () => uploadPhoto(photo));
-    libphoto.addEventListener('change', () => uploadPhoto(libphoto));
+    photo.addEventListener('change', () => {
+      const file = photo.files[0];
+      photo.value = '';  // allow re-selecting the same file
+      if (!file) return;
+      handle(async () => {
+        const small = await shrinkImage(file);
+        const body = new FormData();
+        body.append('photo', small, 'photo.jpg');
+        return fetch('/lookup_image', { method: 'POST', body });
+      }, 'Reading the cert from your photo…');
+    });
   </script>
 </body>
 </html>
