@@ -6,9 +6,14 @@ click the first result to reach the actual card page.
 
 from __future__ import annotations
 
+import re
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from playwright.async_api import Page
 
 from .. import config
+
+_GRADE_IN_URL = re.compile(r"grade=PSA-([\d.]+)", re.I)
 
 # --- Selectors (confirmed live against the logged-in results page) -------------------------
 # Alt renders each result as a Material-UI <button> row whose title is a
@@ -39,12 +44,23 @@ class AltDriver:
             if "/itm/" in (self.page.url or ""):
                 break
             await self.page.wait_for_timeout(150)
-        url = self.page.url
-        if "/itm/" not in url or "grade=" in url:
-            return  # not on an item page, or already graded
+        url = self.page.url or ""
+        if "/itm/" not in url:
+            return  # not on an item page
+
         grade_value = grade if "." in grade else f"{grade}.0"
-        sep = "&" if "?" in url else "?"
-        await self.page.goto(f"{url}{sep}grade=PSA-{grade_value}", wait_until="domcontentloaded")
+        m = _GRADE_IN_URL.search(url)
+        if m and m.group(1) == grade_value:
+            return  # already showing the correct grade
+
+        # Force-set the grade param (replacing any existing/mismatched one) rather than just
+        # bailing on "a grade param is present" — a stale grade from a previous search on this
+        # same page would otherwise never get corrected.
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query))
+        query["grade"] = f"PSA-{grade_value}"
+        new_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+        await self.page.goto(new_url, wait_until="domcontentloaded")
 
     async def _click_first_result(self) -> None:
         for selector in FIRST_RESULT_SELECTORS:

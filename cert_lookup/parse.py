@@ -41,29 +41,35 @@ _ALT_JS = r"""() => {
       if (m.length >= 3) range = m[1] + ' – ' + m[2];
     }
   }
+  // Sale "type" varies more than the live-listing format (Auction/Fixed price) does — sold
+  // transactions can read Auction, Buy now, Best offer, etc. — so listings are identified by the
+  // "listing in <source>" phrase (specific, unlikely to false-positive) while sales are identified
+  // by the trailing "<Month Day, Year> $<price>" shape, with the leading type left unconstrained.
   const seen = new Set();
   for (const a of document.querySelectorAll('a[href]')) {
     const t = (a.innerText || '').replace(/\s+/g, ' ').trim();
     const href = a.getAttribute('href');
-    if (!t || !href || t.length > 90 || seen.has(t)) continue;
-    if (/(fixed price|auction)/i.test(t) && /\$[\d,]/.test(t)) {
-      seen.add(t);
-      if (/listing in/i.test(t)) listings.push({ text: t, href });
-      else if (/^(fixed price|auction)\s+[A-Z][a-z]{2}\s+\d/i.test(t)) txns.push({ text: t, href });
+    if (!t || !href || t.length > 90 || seen.has(t) || !/\$[\d,]/.test(t)) continue;
+    if (/listing in/i.test(t)) {
+      seen.add(t); listings.push({ text: t, href });
+    } else if (/^[A-Za-z][A-Za-z ]{1,20}?\s+[A-Z][a-z]{2}\s+\d{1,2},\s*\d{4}\s*\$[\d,]/.test(t)) {
+      seen.add(t); txns.push({ text: t, href });
     }
   }
   return { value, range, listings: listings.slice(0, 15), txns: txns.slice(0, 15) };
 }"""
 
 # "Auction 3 bids |3d 23h $510 live listing in eBay" / "Fixed price $2,082 live listing in eBay"
+# Listing FORMAT is consistently Auction/Fixed price, so that whitelist stays narrow here.
 _ALT_LISTING = re.compile(
     r"(?P<type>Fixed price|Auction)\s*(?:(?P<bids>\d+)\s*bids)?\s*(?:\|\s*(?P<time>[^$|]+?)\s*)?"
     r"\$(?P<price>[\d,]+)(?:\D+listing in\s*(?P<source>\w+))?",
     re.I,
 )
-# "Auction Jul 1, 2026 $1,438"
+# "Auction Jul 1, 2026 $1,438" / "Buy now Jul 2, 2026 $7,000" / "Best offer Jun 29, 2026 $6,000"
+# — sale completion type is NOT restricted to Auction/Fixed price (unlike listing format above).
 _ALT_TXN = re.compile(
-    r"(?P<type>Fixed price|Auction)\s+(?P<date>[A-Z][a-z]{2}\s+\d{1,2},\s*\d{4})\s*\$(?P<price>[\d,]+)",
+    r"^(?P<type>[A-Za-z][A-Za-z ]{1,20}?)\s+(?P<date>[A-Z][a-z]{2}\s+\d{1,2},\s*\d{4})\s*\$(?P<price>[\d,]+)",
     re.I,
 )
 

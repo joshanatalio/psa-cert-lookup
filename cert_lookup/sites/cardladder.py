@@ -75,6 +75,11 @@ class CardLadderDriver:
 
     async def search(self, cert: str) -> CardLadderResult:
         await self._ensure_on_base_page()
+        # Capture the URL BEFORE submitting: on a repeat search, the page is already sitting on
+        # the PREVIOUS cert's resolved ?...profileId=... URL, so "contains profileId" is true
+        # instantly and would read stale (previous-cert) data. Requiring the URL to actually
+        # CHANGE from this baseline is what makes the wait below correct.
+        pre_nav_url = self.page.url or ""
         await self._open_overlay()
         input_locator = await self._find_first_visible(
             OVERLAY_INPUT_SELECTORS,
@@ -83,19 +88,22 @@ class CardLadderDriver:
         await input_locator.click()
         await input_locator.fill(cert)
         await input_locator.press("Enter")
-        return await self._read_grade(cert)
+        return await self._read_grade(cert, pre_nav_url)
 
-    async def _read_grade(self, cert: str) -> CardLadderResult:
-        """Fast path: wait for the resolved filter URL and read the grade from it.
+    async def _read_grade(self, cert: str, pre_nav_url: str) -> CardLadderResult:
+        """Fast path: wait for the URL to change to a NEWLY resolved filter URL and read the
+        grade from it.
 
         This deliberately does NOT wait for the (slower) profile-name resolution, so the caller
         can apply the grade to Alt without delay. Call resolve_details() afterwards for the name.
         """
         # Poll the URL — CardLadder is an SPA (client-side routing), so wait_for_url's default
         # "load" wait never resolves and would burn the full timeout even though the URL changes
-        # to the resolved ?filters=...profileId within ~1-2s.
+        # to the resolved ?filters=...profileId within ~1-2s. Must differ from pre_nav_url (see
+        # search() above) or a repeat search reads the previous cert's stale URL.
         for _ in range(40):
-            if "profileId" in (self.page.url or ""):
+            url = self.page.url or ""
+            if "profileId" in url and url != pre_nav_url:
                 break
             await self.page.wait_for_timeout(150)
         result = CardLadderResult(cert=cert, url=self.page.url)
@@ -110,8 +118,15 @@ class CardLadderDriver:
         for _ in range(16):
             summary = await self.page.evaluate(_SUMMARY_JS)
             if summary:
-                prof = summary.split("Profile:", 1)[-1].strip()
-                if prof and not prof.lower().startswith("psa-"):
+                sm = _SUMMARY_RE.match(summary)
+                prof = (sm.group(3).strip() if sm else "")
+                # Require both the name to be resolved (not the raw "psa-<id>") AND the grade in
+                # the summary chip to match the grade we already confirmed from the (verified
+                # fresh) URL — otherwise we can read a stale chip left over from the PREVIOUS
+                # search that just happens to already look "resolved".
+                if sm and prof and not prof.lower().startswith("psa-") and (
+                    result.grade is None or sm.group(1) == result.grade
+                ):
                     break
             await self.page.wait_for_timeout(400)
 
