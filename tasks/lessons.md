@@ -74,6 +74,21 @@
   to Alt after the first-result click. The readable card name resolves asynchronously in the
   CardLadder summary chip (first shows `psa-<id>`, then the name), so poll for the resolved name.
 
+## L11 — LaunchAgent must use the interpreter with deps installed, not generic `python3`
+- **Failure mode:** `which python3` resolves to `/usr/bin/python3`, but the actual running
+  interpreter (`sys.executable`) — where `fastapi`/`uvicorn`/`playwright`/`pyobjc` are actually
+  installed — is a different path (`/Library/Developer/CommandLineTools/.../Python3.framework/...`).
+  A LaunchAgent built with the wrong path fails with `ModuleNotFoundError` since `pip install`
+  targets the interpreter you ran it with, not whatever's first on PATH.
+- **Prevention rule:** when generating a LaunchAgent/cron `ProgramArguments`, use `sys.executable`
+  (captured at the time deps were installed) — never assume `python3`/`python` on PATH matches.
+
+## L12 — Headless Chrome CAN still parse the DOM while off-screen (but not minimized)
+- Same finding as the earlier screenshot lesson, reconfirmed for parsing: a window positioned
+  off-screen (`left: -4000`, `windowState: "normal"`) still renders and its DOM is fully readable
+  by `page.evaluate()`; a **minimized** window does not render and reads as empty. Off-screen, not
+  minimized, is the trick for "hidden but functional."
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the

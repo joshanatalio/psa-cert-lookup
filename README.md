@@ -77,14 +77,26 @@ Look up certs from your phone. The Mac does the automation (as always) and sends
 data** — sales, listings, prices — as structured JSON, which sidesteps CardLadder/Alt not being
 mobile-friendly.
 
+The server **runs automatically** via a LaunchAgent (`~/Library/LaunchAgents/com.certlookup.server.plist`)
+— it starts at login and restarts itself if it crashes, so you don't need to launch it by hand. To
+manage it manually:
+
 ```bash
+launchctl unload -w ~/Library/LaunchAgents/com.certlookup.server.plist   # stop + disable
+launchctl load -w ~/Library/LaunchAgents/com.certlookup.server.plist    # start + enable
+# or just for one run without the LaunchAgent:
 python3 -m uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
+Logs: `~/.cert-dual-lookup/server.out.log` and `server.err.log`.
+
 Then, from a browser (Mac or phone), open `http://<host>:8000`. You can:
 - **Type a cert** and tap Look up, or
-- **📷 photograph a slab** — the phone uploads the label, the Mac OCRs the cert (Vision, same as the
-  menu-bar app) and looks it up.
+- **📷 photograph a slab** — tapping the button shows iOS's native "Take Photo / Photo Library"
+  chooser; the photo is resized/compressed client-side (max 1600px, JPEG 85% — plenty for OCR)
+  before upload, then the Mac reads the cert (Vision, same as the menu-bar app) and looks it up.
+- **Tap any sale or listing** to open the original marketplace page (eBay, etc.) in your phone's
+  browser.
 
 Each result shows an **at-a-glance summary** (CardLadder last sale + recent average, Alt value +
 range), then **tabs** between CardLadder (all rendered sales — price, date, type, platform, title)
@@ -92,9 +104,17 @@ and Alt (live listings — price, bids, time left, source — plus recent sales)
 opens the browser (~10-15s); later ones reuse it.
 
 - **From your phone on the same Wi-Fi:** open `http://<mac-LAN-ip>:8000` (find it with
-  `ipconfig getifaddr en0`). **Away from home:** install **Tailscale** (free) on the Mac and phone
-  and use `http://<mac-name>:8000`. No App Store. "Add to Home Screen" in Safari for an app icon.
+  `ipconfig getifaddr en0`). "Add to Home Screen" in Safari for an app icon.
   (If the phone can't connect, allow incoming connections for Python in macOS Firewall settings.)
+- **Away from home:** install [Tailscale](https://tailscale.com/download) (free) on the Mac and the
+  Tailscale app on your phone, sign into **both with the same account**, then use
+  `http://<mac-tailscale-name>:8000` (shown in the Mac's Tailscale menu-bar icon) from anywhere —
+  cellular, other Wi-Fi, etc. No port-forwarding, no App Store for the main tool.
+- **The Mac must stay awake** for phone lookups to work while you're away — the LaunchAgent runs
+  the server under `caffeinate -s -i`, which prevents sleep for as long as the server is running.
+  **Caveat:** on a laptop, closing the lid still sleeps it regardless of caffeinate, unless it's
+  connected to power **and** an external display (clamshell mode). Keep it plugged in with the lid
+  open (or in clamshell mode) if you want phone access while away.
 - The server runs **headful but off-screen** (`config.HIDE_WINDOWS`) — headless trips CardLadder's
   Cloudflare, and a minimized window stops rendering (needed so parsing can read the live DOM), so
   the two windows are positioned off-screen where they still render but don't clutter the Mac.
