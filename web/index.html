@@ -175,9 +175,12 @@
     function row(meta, desc, price, url) {
       // A real <a target="_blank"> — tapping opens the marketplace listing (eBay, etc.) in the
       // phone's actual browser, not inside this page (matters when installed as a home-screen app).
-      const el = document.createElement(url ? 'a' : 'div');
+      // Only linkify ABSOLUTE http(s) URLs — a relative href would resolve against this server's
+      // origin and 404 (belt-and-suspenders; the server should already only send absolute ones).
+      const isLink = url && /^https?:\/\//i.test(url);
+      const el = document.createElement(isLink ? 'a' : 'div');
       el.className = 'sale';
-      if (url) { el.href = url; el.target = '_blank'; el.rel = 'noopener'; }
+      if (isLink) { el.href = url; el.target = '_blank'; el.rel = 'noopener'; }
       el.innerHTML =
         '<div><div class="meta">' + meta + '</div>' +
         (desc ? '<div class="desc">' + desc + '</div>' : '') + '</div>' +
@@ -275,13 +278,18 @@
     async function handle(makeRequest, waitingMsg) {
       begin(waitingMsg);
       try {
-        const res = await makeRequest();
-        const data = await res.json();
+        let res = await makeRequest();
+        let data = await res.json();
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-        if (data.candidates) {  // ambiguous OCR — let the user confirm
-          certEl.value = data.candidates[0];
-          statusEl.textContent = 'Found: ' + data.candidates.join(', ') + '. Check the cert and tap Look up.';
-          return;
+        // Photo OCR found several possible numbers — auto-run the most likely one (its cert shows
+        // in the box, so it's editable if OCR picked wrong) instead of waiting for a manual tap.
+        if (data.candidates && data.candidates.length) {
+          const cert = data.candidates[0];
+          certEl.value = cert;
+          statusEl.textContent = 'Read ' + cert + ' — looking up…';
+          res = await fetch('/lookup?cert=' + encodeURIComponent(cert));
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         }
         showResult(data);
       } catch (err) {

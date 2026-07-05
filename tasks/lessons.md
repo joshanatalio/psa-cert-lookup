@@ -137,6 +137,18 @@
   for a collapse/expand control near that section — "View All"/"Show more" reveals are common on
   card-marketplace sites and are usually simple, fast, in-page reveals worth automating.
 
+## L17 — Scraped hrefs may be relative; a relative link in a proxied UI 404s against YOUR origin
+- **Failure mode:** CardLadder sale rows have two href flavors — some absolute `ebay.com/itm/...`,
+  many RELATIVE (`/sales-history?...&saleId=ebay-<id>`). Passed straight through to the phone page,
+  tapping a relative one resolved against the phone-server's origin, hitting FastAPI → the tell-tale
+  `{"detail":"Not Found"}` 404. (The `{"detail":"Not Found"}` body is a dead giveaway that a click
+  meant for an external site is landing on your own server.)
+- **Prevention rule:** never surface a scraped href verbatim to a UI served from a different origin.
+  Resolve it to an absolute URL first — here the relative link's `saleId=<source>-<id>` encodes the
+  real listing, so reconstruct `ebay.com/itm/<id>` / `alt.xyz/itm/<uuid>`. Belt-and-suspenders:
+  the client should only linkify `^https?://` URLs so a stray relative one renders as plain text,
+  not a broken link.
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the

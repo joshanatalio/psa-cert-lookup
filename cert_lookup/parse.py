@@ -104,6 +104,28 @@ def _money(text: str | None) -> float | None:
     return float(m.group().replace(",", "")) if m else None
 
 
+# CardLadder sale rows have two kinds of href: some are direct absolute marketplace URLs, others
+# are RELATIVE CardLadder internal links like "/sales-history?...&saleId=ebay-<id>". A relative
+# href resolves against the phone-server's origin (→ 404), so we reconstruct the real marketplace
+# URL from the saleId (which encodes source + listing id).
+_SALE_ID_RE = re.compile(r"saleId=(ebay|alt)-([^&]+)", re.I)
+
+
+def _cl_external_url(href: str | None) -> str | None:
+    if not href:
+        return None
+    if href.startswith("http://") or href.startswith("https://"):
+        return href  # already a direct marketplace link
+    m = _SALE_ID_RE.search(href)
+    if m:
+        source, sale_id = m.group(1).lower(), m.group(2)
+        if source == "ebay":
+            return f"https://www.ebay.com/itm/{sale_id}"
+        if source == "alt":
+            return f"https://alt.xyz/itm/{sale_id}/research"
+    return None  # unknown/unmappable — leave it non-clickable rather than link to a 404
+
+
 async def parse_cardladder(page) -> dict:
     # Wait for an actual sale ROW (not just "Date Sold", which is also a static column-header
     # label present before any row loads — waiting on that text alone is a false-positive "ready"
@@ -133,7 +155,7 @@ async def parse_cardladder(page) -> dict:
                 "date": m.group("date").strip(),
                 "type": m.group("type").strip(),
                 "price": _money(m.group("price")),
-                "url": row.get("href"),  # opens the original marketplace listing (eBay, etc.)
+                "url": _cl_external_url(row.get("href")),  # real marketplace listing (eBay/Alt)
                 "image": row.get("image"),
             }
         )
