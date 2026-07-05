@@ -256,7 +256,9 @@
       renderSummary(data.data);
       const notes = Object.entries(data.status || {})
         .filter(([, v]) => v !== 'ok').map(([k, v]) => k + ': ' + v);
-      statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : 'Done.';
+      // The result itself (label/summary/sales) is the completion signal — only surface status
+      // text when there's something to warn about, don't leave a stale "Done." lingering.
+      statusEl.textContent = notes.length ? '⚠️ ' + notes.join(' · ') : '';
       lastData = data;
       tabsEl.hidden = false;
       renderTab();

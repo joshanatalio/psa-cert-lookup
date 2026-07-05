@@ -60,7 +60,26 @@ _ALT_JS = r"""() => {
       seen.add(t); txns.push({ text: t, href });
     }
   }
-  return { value, range, listings: listings.slice(0, 15), txns: txns.slice(0, 15) };
+  return { value, range, listings: listings.slice(0, 15), txns: txns.slice(0, 25) };
+}"""
+
+# Alt collapses "Recent Transactions" to 4 by default with a "VIEW ALL" control that expands it
+# client-side (confirmed live: no navigation, same URL) to its real full history (~15 for a
+# typical card — clicking again doesn't add more, so that's the actual ceiling Alt exposes, not a
+# limit we're imposing). Click it before scraping so sales aren't capped at 4.
+_CLICK_VIEW_ALL_JS = r"""(headingRe) => {
+  const rx = new RegExp(headingRe, 'i');
+  const heading = [...document.querySelectorAll('*')].find(e =>
+    e.children.length === 0 && rx.test((e.innerText || '').trim()));
+  if (!heading) return false;
+  let container = heading;
+  for (let i = 0; i < 6 && container; i++) container = container.parentElement;
+  if (!container) return false;
+  const btn = [...container.querySelectorAll('button, a')].find(e =>
+    /view all/i.test((e.innerText || '').trim()));
+  if (!btn) return false;
+  btn.click();
+  return true;
 }"""
 
 # "Auction 3 bids |3d 23h $510 live listing in eBay" / "Fixed price $2,082 live listing in eBay"
@@ -130,26 +149,39 @@ async def parse_cardladder(page) -> dict:
     }
 
 
-async def parse_alt(page) -> dict:
-    # Listings/recent-transactions render on an intersection observer, so scroll once to bring
-    # them into view. The sales (recent-transactions) section and the live-listings section
-    # render at DIFFERENT times — sales links typically appear first — so waiting for "any eBay
-    # link" alone exits as soon as sales show up and misses listings entirely if they're still
-    # loading (confirmed live: listings appeared ~3s after sales on a grade switch). Instead, poll
-    # the COUNT of eBay links and wait for it to stop growing (stable across 3 checks) before
-    # reading, not just for it to become nonzero.
-    await page.mouse.wheel(0, 2400)
+async def _wait_for_ebay_links_stable(page, max_checks: int = 30) -> None:
+    """Poll the COUNT of eBay links until it stops growing (stable across 3 checks), not just
+    until it's nonzero — sales and listings render at different times, so "any link present" can
+    be satisfied by one section while the other is still loading (confirmed live)."""
     prev_count, stable = -1, 0
-    for _ in range(30):  # up to ~6s
+    for _ in range(max_checks):
         count = await page.evaluate("() => document.querySelectorAll('a[href*=\"ebay.com/itm\"]').length")
         if count > 0 and count == prev_count:
             stable += 1
             if stable >= 3:
-                break
+                return
         else:
             stable = 0
         prev_count = count
         await page.wait_for_timeout(200)
+
+
+async def parse_alt(page) -> dict:
+    # Listings/recent-transactions render on an intersection observer, so scroll once to bring
+    # them into view, then wait for both sections to settle (see _wait_for_ebay_links_stable).
+    await page.mouse.wheel(0, 2400)
+    await _wait_for_ebay_links_stable(page)
+
+    # Alt collapses "Recent Transactions" to 4 by default; expand it (client-side, no navigation)
+    # so sales aren't artificially capped — verified live this gets close to CardLadder's count
+    # (4 -> 15 on a real cert). No-op if the control isn't there (e.g. <=4 sales already shown).
+    try:
+        expanded = await page.evaluate(_CLICK_VIEW_ALL_JS, "^recent transactions$")
+    except Exception:  # noqa: BLE001
+        expanded = False
+    if expanded:
+        await _wait_for_ebay_links_stable(page, max_checks=20)
+
     await page.evaluate("() => window.scrollTo(0, 0)")
     raw = await page.evaluate(_ALT_JS)
 

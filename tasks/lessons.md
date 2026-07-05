@@ -127,6 +127,16 @@
   "just hasn't grown yet"); requiring N consecutive stable checks is what actually distinguishes
   "finished" from "still loading."
 
+## L16 — A page showing "only 4" may just be collapsed, not actually limited
+- When a scraped count looked artificially small (Alt's recent sales always capped at 4, unlike
+  CardLadder's 20), the fix wasn't a better selector — it was finding the page's own "VIEW ALL"
+  affordance and clicking it (client-side expansion, no navigation, confirmed by checking the URL
+  didn't change). Went from 4 → 15 sales. Clicking it again added nothing further, confirming 15
+  was the real ceiling Alt exposes for that card, not an artifact of our scraping.
+- **Prevention rule:** before assuming a low count is the data's real limit, check the live page
+  for a collapse/expand control near that section — "View All"/"Show more" reveals are common on
+  card-marketplace sites and are usually simple, fast, in-page reveals worth automating.
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the
