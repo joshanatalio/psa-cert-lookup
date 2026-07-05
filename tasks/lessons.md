@@ -114,6 +114,19 @@
   page's static template before any data has loaded. Put this wait *inside* the parser itself so
   it can't be skipped by a caller that takes a different, faster path.
 
+## L15 — A page's independent sections can load at very different speeds; "any data present" isn't "all data present"
+- **Failure mode:** even after fixing L14 (wait for real data, not a label), Alt's live-listings
+  section still went missing intermittently. Root cause: Alt's recent-sales links and
+  live-listings links both match `a[href*="ebay.com/itm"]`, but sales consistently render BEFORE
+  listings (confirmed: listings appeared ~3s after sales on a grade switch). "Wait until at least
+  one matching link exists" was satisfied by sales alone, so parsing ran before listings had
+  loaded — same failure shape as L14 but one level deeper (present ≠ complete).
+- **Prevention rule:** when a page has multiple independently-loading sections feeding the same
+  selector, don't stop at "nonzero" — poll for the COUNT to stabilize (unchanged across several
+  consecutive checks) before reading. A single stable reading is ambiguous (could mean "done" or
+  "just hasn't grown yet"); requiring N consecutive stable checks is what actually distinguishes
+  "finished" from "still loading."
+
 ## L4 — Inspect a locked profile via a throwaway copy
 - When the user's tool holds the profile lock, copy the (already logged-in) profile to a scratch
   dir and inspect there — no need to interrupt their running session. Include IndexedDB so the

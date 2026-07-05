@@ -20,10 +20,14 @@ _CL_ROW = re.compile(
 
 _CL_JS = r"""() => {
   const rows = [...document.querySelectorAll('a.list-item.clickable')]
-    .slice(0, 25).map(a => ({
-      text: (a.innerText || '').replace(/\s+/g, ' ').trim(),
-      href: a.getAttribute('href') || null,
-    }));
+    .slice(0, 25).map(a => {
+      const img = a.querySelector('img');
+      return {
+        text: (a.innerText || '').replace(/\s+/g, ' ').trim(),
+        href: a.getAttribute('href') || null,
+        image: img ? img.src : null,
+      };
+    });
   return { rows };
 }"""
 
@@ -111,6 +115,7 @@ async def parse_cardladder(page) -> dict:
                 "type": m.group("type").strip(),
                 "price": _money(m.group("price")),
                 "url": row.get("href"),  # opens the original marketplace listing (eBay, etc.)
+                "image": row.get("image"),
             }
         )
     prices = [s["price"] for s in sales if s["price"] is not None]
@@ -120,19 +125,30 @@ async def parse_cardladder(page) -> dict:
         "last_sale": last["price"] if last else None,
         "last_date": last["date"] if last else None,
         "recent_avg": recent_avg,
+        "image": last["image"] if last else None,  # first sale's card photo, for the header
         "sales": sales,  # all rendered sales, full info
     }
 
 
 async def parse_alt(page) -> dict:
     # Listings/recent-transactions render on an intersection observer, so scroll once to bring
-    # them into view, then poll briefly for an actual eBay link to show up instead of blindly
-    # waiting a fixed duration regardless of how fast the page actually loads (was costing ~1.8s
-    # on every lookup; this exits as soon as data's ready, same worst-case cap otherwise).
+    # them into view. The sales (recent-transactions) section and the live-listings section
+    # render at DIFFERENT times — sales links typically appear first — so waiting for "any eBay
+    # link" alone exits as soon as sales show up and misses listings entirely if they're still
+    # loading (confirmed live: listings appeared ~3s after sales on a grade switch). Instead, poll
+    # the COUNT of eBay links and wait for it to stop growing (stable across 3 checks) before
+    # reading, not just for it to become nonzero.
     await page.mouse.wheel(0, 2400)
-    for _ in range(12):
-        if await page.evaluate("() => !!document.querySelector('a[href*=\"ebay.com/itm\"]')"):
-            break
+    prev_count, stable = -1, 0
+    for _ in range(30):  # up to ~6s
+        count = await page.evaluate("() => document.querySelectorAll('a[href*=\"ebay.com/itm\"]').length")
+        if count > 0 and count == prev_count:
+            stable += 1
+            if stable >= 3:
+                break
+        else:
+            stable = 0
+        prev_count = count
         await page.wait_for_timeout(200)
     await page.evaluate("() => window.scrollTo(0, 0)")
     raw = await page.evaluate(_ALT_JS)

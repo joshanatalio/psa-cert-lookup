@@ -28,6 +28,7 @@ config.HIDE_WINDOWS = True  # headful (Cloudflare needs it) but off-screen so no
 from cert_lookup import (  # noqa: E402 - after the profile override above
     LookupController,
     cert_extraction,
+    history,
     parse,
 )
 from cert_lookup.config import clean_cert  # noqa: E402
@@ -54,6 +55,13 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
     return (WEB_DIR / "index.html").read_text()
+
+
+@app.get("/history")
+async def get_history():
+    # Shared with the menu-bar app's history (same ~/.cert-dual-lookup/history.db) — one unified
+    # recent-lookups list across Mac and phone use.
+    return [{"cert": e.cert, "label": e.label} for e in history.recent(20)]
 
 
 @app.get("/lookup")
@@ -89,6 +97,7 @@ async def _run_lookup(cert: str, grade: str | None = None) -> dict:
     async with lock:
         result = await controller.run(cert, grade)
         data = await _parse_all()
+    history.record(cert, result.status, result.label)
     return {
         "cert": cert,
         "label": result.label,

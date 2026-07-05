@@ -31,13 +31,30 @@
     #cam { background: #e5e5ea; }
     @media (prefers-color-scheme: dark) { #cam { background: #2c2c2e; } }
     #status { min-height: 20px; margin: 10px 2px; font-size: 14px; color: #666; }
-    #labelRow { display: flex; align-items: center; gap: 8px; margin: 6px 2px 12px; }
+    #resultHeader { display: flex; align-items: center; gap: 10px; margin: 6px 2px 8px; }
+    #cardImg {
+      width: 52px; height: 52px; object-fit: cover; border-radius: 8px;
+      border: 1px solid #0002; flex-shrink: 0; background: #fff;
+    }
     #label { font-weight: 600; flex: 1; min-width: 0; }
     #grade {
-      font-size: 14px; font-weight: 600; padding: 6px 8px; border-radius: 8px;
-      border: 1px solid #ccc; background: #fff; color: #111;
+      font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid #ccc; background: #fff; color: #111; margin: 0 0 12px;
     }
     @media (prefers-color-scheme: dark) { #grade { background: #1c1c1e; color: #eee; border-color: #333; } }
+    #historyBox { margin: 4px 2px 10px; }
+    #historyBox summary {
+      font-size: 13px; font-weight: 600; color: #666; cursor: pointer; list-style: none;
+    }
+    #historyBox summary::-webkit-details-marker { display: none; }
+    #historyBox summary::before { content: '▸ '; }
+    #historyBox[open] summary::before { content: '▾ '; }
+    #historyList { margin-top: 8px; }
+    .hist-item {
+      display: block; width: 100%; text-align: left; font: inherit; padding: 9px 12px;
+      background: #fff; border: 1px solid #0001; border-radius: 10px; margin-bottom: 6px; color: inherit;
+    }
+    @media (prefers-color-scheme: dark) { .hist-item { background: #1c1c1e; border-color: #333; } }
     #summary { display: flex; gap: 8px; margin: 0 0 14px; }
     .card {
       flex: 1; background: #fff; border-radius: 12px; padding: 12px 14px; border: 1px solid #0001;
@@ -81,11 +98,16 @@
     </form>
     <!-- No `capture` attribute: iOS shows its native "Take Photo / Photo Library" chooser. -->
     <input id="photo" type="file" accept="image/*" hidden />
+    <details id="historyBox" hidden>
+      <summary>Recent</summary>
+      <div id="historyList"></div>
+    </details>
     <div id="status"></div>
-    <div id="labelRow" hidden>
+    <div id="resultHeader" hidden>
+      <img id="cardImg" hidden />
       <div id="label"></div>
-      <select id="grade" title="Compare a different PSA grade of this same card"></select>
     </div>
+    <select id="grade" hidden title="Compare a different PSA grade of this same card"></select>
     <div id="summary"></div>
     <div id="tabs" hidden>
       <div class="tab active" data-tab="cardladder">CardLadder</div>
@@ -99,7 +121,8 @@
     const certEl = document.getElementById('cert');
     const go = document.getElementById('go');
     const statusEl = document.getElementById('status');
-    const labelRowEl = document.getElementById('labelRow');
+    const resultHeaderEl = document.getElementById('resultHeader');
+    const cardImgEl = document.getElementById('cardImg');
     const labelEl = document.getElementById('label');
     const gradeEl = document.getElementById('grade');
     const summaryEl = document.getElementById('summary');
@@ -140,7 +163,8 @@
       go.disabled = true; cam.disabled = true; gradeEl.disabled = true;
       statusEl.textContent = msg;
       labelEl.textContent = ''; summaryEl.innerHTML = ''; out.innerHTML = '';
-      labelRowEl.hidden = true; tabsEl.hidden = true;
+      cardImgEl.hidden = true; cardImgEl.src = '';
+      resultHeaderEl.hidden = true; gradeEl.hidden = true; tabsEl.hidden = true;
       lastData = null;
     }
     function done() { go.disabled = false; cam.disabled = false; gradeEl.disabled = false; }
@@ -217,11 +241,14 @@
         if (String(g) === current) opt.selected = true;
         gradeEl.appendChild(opt);
       }
-      labelRowEl.hidden = false;
+      gradeEl.hidden = false;
     }
 
     function showResult(data) {
       labelEl.textContent = data.label || data.cert || '';
+      const image = (data.data && data.data.cardladder && data.data.cardladder.image) || null;
+      if (image) { cardImgEl.src = image; cardImgEl.hidden = false; }
+      resultHeaderEl.hidden = false;
       renderGradePicker(data);
       renderSummary(data.data);
       const notes = Object.entries(data.status || {})
@@ -230,6 +257,7 @@
       lastData = data;
       tabsEl.hidden = false;
       renderTab();
+      refreshHistory();
     }
 
     gradeEl.addEventListener('change', () => {
@@ -265,6 +293,34 @@
       handle(() => fetch('/lookup?cert=' + encodeURIComponent(cert)),
              'Looking up ' + cert + '… (first lookup opens the browser, ~10s)');
     });
+
+    // History — name only (no cert/image shown), same underlying list as the menu-bar app's.
+    const historyBoxEl = document.getElementById('historyBox');
+    const historyListEl = document.getElementById('historyList');
+
+    async function refreshHistory() {
+      try {
+        const res = await fetch('/history');
+        const entries = await res.json();
+        historyListEl.innerHTML = '';
+        for (const e of entries) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'hist-item';
+          btn.textContent = e.label || e.cert;
+          btn.addEventListener('click', () => {
+            historyBoxEl.open = false;
+            handle(() => fetch('/lookup?cert=' + encodeURIComponent(e.cert)),
+                   'Looking up ' + (e.label || e.cert) + '…');
+          });
+          historyListEl.appendChild(btn);
+        }
+        historyBoxEl.hidden = entries.length === 0;
+      } catch (err) {
+        // Non-critical — history just stays as-is if this fails.
+      }
+    }
+    refreshHistory();
 
     // Cert labels are small text on a slab — this resolution is plenty for OCR, and keeping the
     // upload small makes it fast on cellular. Downscale/compress client-side before sending,

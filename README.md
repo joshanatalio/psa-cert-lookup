@@ -95,14 +95,17 @@ Then, from a browser (Mac or phone), open `http://<host>:8000`. You can:
 - **📷 photograph a slab** — tapping the button shows iOS's native "Take Photo / Photo Library"
   chooser; the photo is resized/compressed client-side (max 1600px, JPEG 85% — plenty for OCR)
   before upload, then the Mac reads the cert (Vision, same as the menu-bar app) and looks it up.
+- **Tap "Recent"** to expand your lookup history (card name only) and re-run any of them — shared
+  with the menu-bar app's history (same `~/.cert-dual-lookup/history.db`).
 - **Tap any sale or listing** to open the original marketplace page (eBay, etc.) in your phone's
   browser.
 
-Each result shows an **at-a-glance summary** (CardLadder last sale + recent average, Alt value +
-range), a **PSA grade dropdown** next to the card name, then **tabs** between CardLadder (all
-rendered sales — price, date, type, platform, title) and Alt (recent sales, then live listings —
-price, bids, time left, source). The first lookup opens the browser (~10-15s); later ones reuse
-it and typically finish in 2-4s.
+Each result shows the **card's photo** (from CardLadder's first sale) next to its name, a **PSA
+grade dropdown** below that, an **at-a-glance summary** (CardLadder last sale + recent average,
+Alt value + range), then **tabs** between CardLadder (all rendered sales — price, date, type,
+platform, title, photo) and Alt (recent sales, then live listings — price, bids, time left,
+source). The first lookup opens the browser (~10-15s); later ones reuse it and typically finish
+in 2-4s.
 
 **Comparing grades:** the dropdown defaults to the slab's actual grade; picking a different one
 (e.g. PSA 10) re-renders both sites' data for that grade **of the same card** — CardLadder by
